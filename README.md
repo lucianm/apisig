@@ -59,6 +59,18 @@ File-driven mode (available now):
 apisig compute --symbols symbols.txt --metadata build.env --json
 ```
 
+Create or refresh a baseline file:
+
+```powershell
+apisig snapshot --symbols symbols.txt --metadata build.env --out apisig-baseline.json
+```
+
+Compare current signatures against a baseline:
+
+```powershell
+apisig compare --symbols symbols.txt --metadata build.env --baseline apisig-baseline.json
+```
+
 LibTooling mode (interface present, extractor pass pending):
 
 ```powershell
@@ -91,12 +103,21 @@ Metadata file:
 
 Current scaffold uses a stable 64-bit FNV-1a hash for deterministic output.
 
+`snapshot` writes a baseline JSON with `version`, `api_hash`, and `rebuild_hash`.
+
+`compare` returns:
+
+- `0`: unchanged
+- `10`: API changed
+- `11`: rebuild hash changed while API hash is unchanged
+- `1`: runtime/config/input error
+- `2`: usage error
+
 ## Roadmap
 
 - implement Clang LibTooling AST extraction for public C/C++ symbols
-- add baseline management (`snapshot`, `compare`, `assert`)
 - classify changes (compatible, breaking, rebuild-only)
-- add CI-oriented exit codes and report formats
+- extend report formats and policy controls for CI consumption
 
 ## Dependency Management
 

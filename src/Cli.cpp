@@ -3,39 +3,203 @@
 #include "apisig/SignatureEngine.h"
 
 #include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <iterator>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace
 {
+enum class CommandType
+{
+    Compute,
+    Snapshot,
+    Compare
+};
+
 struct CliOptions
 {
+    CommandType command = CommandType::Compute;
     std::optional<std::filesystem::path> symbolsFile;
     std::optional<std::filesystem::path> metadataFile;
     std::optional<std::filesystem::path> compdb;
     std::optional<std::filesystem::path> sourceRoot;
+    std::optional<std::filesystem::path> outputFile;
+    std::optional<std::filesystem::path> baselineFile;
     bool json = false;
 };
 
+struct Baseline
+{
+    std::string apiHash;
+    std::string rebuildHash;
+};
+
+enum ExitCode
+{
+    ExitOk = 0,
+    ExitError = 1,
+    ExitUsage = 2,
+    ExitApiChanged = 10,
+    ExitRebuildChanged = 11
+};
+
+std::string EscapeJson(std::string_view value)
+{
+    std::string out;
+    out.reserve(value.size());
+    for (const char ch : value)
+    {
+        switch (ch)
+        {
+        case '\\':
+            out += "\\\\";
+            break;
+        case '"':
+            out += "\\\"";
+            break;
+        case '\n':
+            out += "\\n";
+            break;
+        case '\r':
+            out += "\\r";
+            break;
+        case '\t':
+            out += "\\t";
+            break;
+        default:
+            out += ch;
+            break;
+        }
+    }
+    return out;
+}
+
+std::string SignatureJson(const apisig::SignaturePair& result)
+{
+    return "{\n"
+           "  \"api_hash\": \"" + EscapeJson(result.apiHash) + "\",\n"
+           "  \"rebuild_hash\": \"" + EscapeJson(result.rebuildHash) + "\"\n"
+           "}\n";
+}
+
 void PrintUsage()
 {
-    std::cout << "apisig compute [options]\n\n"
+    std::cout << "apisig <command> [options]\n\n"
+              << "Commands:\n"
+              << "  compute   Compute signatures from current input\n"
+              << "  snapshot  Compute signatures and write a baseline JSON\n"
+              << "  compare   Compute signatures and compare to a baseline JSON\n\n"
               << "Options:\n"
               << "  --symbols <file>     Public symbols file (one symbol per line)\n"
               << "  --metadata <file>    Metadata file (key=value per line)\n"
               << "  --compdb <file>      compile_commands.json for LibTooling mode\n"
               << "  --source-root <dir>  Source root used with --compdb\n"
+              << "  --out <file>         Snapshot output JSON path (snapshot only)\n"
+              << "  --baseline <file>    Baseline JSON path (compare only)\n"
               << "  --json               Print JSON output\n";
 }
 
-CliOptions ParseComputeArguments(const std::vector<std::string>& args)
+std::string ReadAllText(const std::filesystem::path& path)
 {
-    CliOptions options;
+    std::ifstream input(path);
+    if (!input)
+    {
+        throw std::runtime_error("Could not open file: " + path.string());
+    }
 
-    for (std::size_t i = 0; i < args.size(); ++i)
+    return std::string(
+        std::istreambuf_iterator<char>(input),
+        std::istreambuf_iterator<char>());
+}
+
+std::string ExtractJsonString(const std::string& json, const std::string& key)
+{
+    const std::string needle = "\"" + key + "\"";
+    const auto keyPos = json.find(needle);
+    if (keyPos == std::string::npos)
+    {
+        throw std::runtime_error("Missing key in baseline JSON: " + key);
+    }
+
+    const auto colonPos = json.find(':', keyPos + needle.size());
+    if (colonPos == std::string::npos)
+    {
+        throw std::runtime_error("Invalid JSON format for key: " + key);
+    }
+
+    const auto firstQuote = json.find('"', colonPos + 1);
+    if (firstQuote == std::string::npos)
+    {
+        throw std::runtime_error("Expected quoted value for key: " + key);
+    }
+
+    const auto secondQuote = json.find('"', firstQuote + 1);
+    if (secondQuote == std::string::npos)
+    {
+        throw std::runtime_error("Unterminated quoted value for key: " + key);
+    }
+
+    return json.substr(firstQuote + 1, secondQuote - (firstQuote + 1));
+}
+
+Baseline ReadBaseline(const std::filesystem::path& path)
+{
+    const std::string content = ReadAllText(path);
+    return Baseline{
+        ExtractJsonString(content, "api_hash"),
+        ExtractJsonString(content, "rebuild_hash")};
+}
+
+void WriteSnapshot(const std::filesystem::path& path, const apisig::SignaturePair& result)
+{
+    std::ofstream output(path);
+    if (!output)
+    {
+        throw std::runtime_error("Could not write snapshot file: " + path.string());
+    }
+
+    output << "{\n"
+              "  \"version\": 1,\n"
+              "  \"api_hash\": \""
+           << EscapeJson(result.apiHash)
+           << "\",\n"
+              "  \"rebuild_hash\": \""
+           << EscapeJson(result.rebuildHash)
+           << "\"\n"
+              "}\n";
+}
+
+CliOptions ParseArguments(const std::vector<std::string>& args)
+{
+    if (args.empty())
+    {
+        throw std::runtime_error("Missing command. Use compute, snapshot, or compare.");
+    }
+
+    CliOptions options;
+    if (args[0] == "compute")
+    {
+        options.command = CommandType::Compute;
+    }
+    else if (args[0] == "snapshot")
+    {
+        options.command = CommandType::Snapshot;
+    }
+    else if (args[0] == "compare")
+    {
+        options.command = CommandType::Compare;
+    }
+    else
+    {
+        throw std::runtime_error("Unknown command: " + args[0]);
+    }
+
+    for (std::size_t i = 1; i < args.size(); ++i)
     {
         const std::string& arg = args[i];
         const auto requireValue = [&](const std::string& optionName) -> std::string {
@@ -63,6 +227,14 @@ CliOptions ParseComputeArguments(const std::vector<std::string>& args)
         {
             options.sourceRoot = requireValue(arg);
         }
+        else if (arg == "--out")
+        {
+            options.outputFile = requireValue(arg);
+        }
+        else if (arg == "--baseline")
+        {
+            options.baselineFile = requireValue(arg);
+        }
         else if (arg == "--json")
         {
             options.json = true;
@@ -76,14 +248,43 @@ CliOptions ParseComputeArguments(const std::vector<std::string>& args)
     return options;
 }
 
+apisig::ComputeRequest BuildRequest(const CliOptions& options)
+{
+    apisig::ComputeRequest request;
+
+    if (options.compdb.has_value())
+    {
+        if (!options.sourceRoot.has_value())
+        {
+            throw std::runtime_error("--source-root is required when --compdb is provided");
+        }
+
+        request.symbols = apisig::ExtractPublicSymbolsFromCompilationDatabase(
+            options.compdb.value(),
+            options.sourceRoot.value());
+    }
+    else
+    {
+        if (!options.symbolsFile.has_value())
+        {
+            throw std::runtime_error("--symbols is required when --compdb is not used");
+        }
+        request.symbols = apisig::ReadSymbolLines(options.symbolsFile.value());
+    }
+
+    if (options.metadataFile.has_value())
+    {
+        request.metadata = apisig::ReadMetadata(options.metadataFile.value());
+    }
+
+    return request;
+}
+
 void PrintResult(const apisig::SignaturePair& result, bool json)
 {
     if (json)
     {
-        std::cout << "{\n"
-                  << "  \"api_hash\": \"" << result.apiHash << "\",\n"
-                  << "  \"rebuild_hash\": \"" << result.rebuildHash << "\"\n"
-                  << "}\n";
+        std::cout << SignatureJson(result);
         return;
     }
 
@@ -94,51 +295,107 @@ void PrintResult(const apisig::SignaturePair& result, bool json)
 
 int RunCli(const std::vector<std::string>& args)
 {
-    if (args.empty() || args[0] != "compute")
-    {
-        PrintUsage();
-        return 2;
-    }
-
     try
     {
-        const std::vector<std::string> computeArgs(args.begin() + 1, args.end());
-        const CliOptions options = ParseComputeArguments(computeArgs);
-
-        apisig::ComputeRequest request;
-
-        if (options.compdb.has_value())
+        if (args.empty())
         {
-            if (!options.sourceRoot.has_value())
+            PrintUsage();
+            return ExitUsage;
+        }
+
+        const CliOptions options = ParseArguments(args);
+        const apisig::ComputeRequest request = BuildRequest(options);
+        const apisig::SignaturePair result = apisig::ComputeSignatures(request);
+
+        if (options.command == CommandType::Compute)
+        {
+            PrintResult(result, options.json);
+            return ExitOk;
+        }
+
+        if (options.command == CommandType::Snapshot)
+        {
+            if (!options.outputFile.has_value())
             {
-                throw std::runtime_error("--source-root is required when --compdb is provided");
+                throw std::runtime_error("--out is required for snapshot command");
             }
 
-            request.symbols = apisig::ExtractPublicSymbolsFromCompilationDatabase(
-                options.compdb.value(),
-                options.sourceRoot.value());
+            WriteSnapshot(options.outputFile.value(), result);
+            if (options.json)
+            {
+                std::cout << SignatureJson(result);
+            }
+            else
+            {
+                std::cout << "snapshot=" << options.outputFile.value().string() << '\n';
+                PrintResult(result, false);
+            }
+            return ExitOk;
+        }
+
+        if (!options.baselineFile.has_value())
+        {
+            throw std::runtime_error("--baseline is required for compare command");
+        }
+
+        const Baseline baseline = ReadBaseline(options.baselineFile.value());
+
+        const bool apiChanged = (result.apiHash != baseline.apiHash);
+        const bool rebuildChanged = (result.rebuildHash != baseline.rebuildHash);
+
+        if (options.json)
+        {
+            const std::string status = apiChanged ? "api_changed" : (rebuildChanged ? "rebuild_changed" : "unchanged");
+            std::string currentJson = SignatureJson(result);
+            if (!currentJson.empty() && currentJson.back() == '\n')
+            {
+                currentJson.pop_back();
+            }
+            std::cout << "{\n"
+                      << "  \"status\": \"" << status << "\",\n"
+                      << "  \"current\": " << currentJson << ",\n"
+                      << "  \"baseline\": {\n"
+                      << "    \"api_hash\": \"" << baseline.apiHash << "\",\n"
+                      << "    \"rebuild_hash\": \"" << baseline.rebuildHash << "\"\n"
+                      << "  }\n"
+                      << "}\n";
         }
         else
         {
-            if (!options.symbolsFile.has_value())
+            std::cout << "baseline=" << options.baselineFile.value().string() << '\n';
+            if (!apiChanged && !rebuildChanged)
             {
-                throw std::runtime_error("--symbols is required when --compdb is not used");
+                std::cout << "status=unchanged\n";
             }
-            request.symbols = apisig::ReadSymbolLines(options.symbolsFile.value());
+            else if (apiChanged)
+            {
+                std::cout << "status=api_changed\n";
+            }
+            else
+            {
+                std::cout << "status=rebuild_changed\n";
+            }
+
+            std::cout << "baseline_api_hash=" << baseline.apiHash << '\n';
+            std::cout << "current_api_hash=" << result.apiHash << '\n';
+            std::cout << "baseline_rebuild_hash=" << baseline.rebuildHash << '\n';
+            std::cout << "current_rebuild_hash=" << result.rebuildHash << '\n';
         }
 
-        if (options.metadataFile.has_value())
+        if (apiChanged)
         {
-            request.metadata = apisig::ReadMetadata(options.metadataFile.value());
+            return ExitApiChanged;
+        }
+        if (rebuildChanged)
+        {
+            return ExitRebuildChanged;
         }
 
-        const apisig::SignaturePair result = apisig::ComputeSignatures(request);
-        PrintResult(result, options.json);
-        return 0;
+        return ExitOk;
     }
     catch (const std::exception& ex)
     {
         std::cerr << "apisig: " << ex.what() << '\n';
-        return 1;
+        return ExitError;
     }
 }
