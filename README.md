@@ -59,6 +59,12 @@ File-driven mode (available now):
 apisig compute --symbols symbols.txt --metadata build.env --json
 ```
 
+Inspect exactly what is hashed (normalized symbol set):
+
+```powershell
+apisig extract --symbols symbols.txt --json
+```
+
 Create or refresh a baseline file:
 
 ```powershell
@@ -71,10 +77,16 @@ Compare current signatures against a baseline:
 apisig compare --symbols symbols.txt --metadata build.env --baseline apisig-baseline.json
 ```
 
-LibTooling mode (interface present, extractor pass pending):
+LibTooling mode (when built with LibTooling enabled):
 
 ```powershell
 apisig compute --compdb compile_commands.json --source-root . --metadata build.env --json
+```
+
+Inspect clang-derived symbols from AST traversal:
+
+```powershell
+apisig extract --compdb compile_commands.json --source-root . --json
 ```
 
 ## Input Format
@@ -83,7 +95,11 @@ Symbols file:
 
 - one symbol per line
 - blank lines ignored
-- lines beginning with `#` ignored
+- C/C++ comments are stripped (`//...` and `/*...*/`)
+- C/C++ whitespace is normalized token-wise (formatting-only spacing changes are ignored)
+- lines beginning with `# ` (hash + space) are treated as human comment lines and ignored
+- preprocessor directives such as `#define` are included in hashing input
+- multiline macros (`\\` line continuation) are folded into one normalized logical line
 - duplicate symbols are de-duplicated
 - ordering does not matter
 
