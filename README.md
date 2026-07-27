@@ -89,6 +89,49 @@ Inspect clang-derived symbols from AST traversal:
 apisig extract --compdb compile_commands.json --source-root . --json
 ```
 
+## Extraction Modes And Trust Level
+
+apisig currently supports two different extraction modes. They are not equivalent in semantic precision.
+
+### File-driven mode (`--symbols`)
+
+- Purpose: self-contained fallback when clang/LibTooling is not available on build agents.
+- Input: text lines from a symbols file or directly from a header fed as symbols input.
+- Normalization: comment stripping, BOM stripping, token-aware whitespace normalization, macro continuation folding.
+- Canonicalization: sorted, deduplicated symbol list for stable order-invariant output.
+
+What this mode is good at:
+
+- robust change detection for many practical header text edits
+- deterministic behavior on minimal CI agents
+
+Known limitations:
+
+- text-based, not full C++ semantic analysis
+- can lose declaration context/scope relationships
+- deduplication can hide multiplicity of identical normalized lines
+
+### LibTooling mode (`--compdb` + `--source-root`)
+
+- Purpose: semantic extraction path using clang AST.
+- Input: compile_commands.json and source root.
+- Extraction: externally linked declarations (functions, record types, enums, globals) using AST traversal.
+
+What this mode is good at:
+
+- language-aware extraction and stronger semantic fidelity
+- better long-term authority for API compatibility gates
+
+Operational note:
+
+- LibTooling mode means apisig uses clang as a parser library.
+- It does not instrument your product code and does not force your product build to use clang.
+
+Recommendation:
+
+- treat file-driven mode as a CI-safe fallback
+- treat LibTooling mode as the authoritative semantic signature mode when available
+
 ## Input Format
 
 Symbols file:
