@@ -1,0 +1,75 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 22,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "vs2022-x64",
+      "displayName": "VS2022 x64",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/out/build-vs2022",
+      "cacheVariables": {
+        "APISIG_SELF_CONTAINED": "ON",
+        "APISIG_WITH_LIBTOOLING": "OFF"
+      }
+    },
+    {
+      "name": "vs2022-x64-libtooling",
+      "displayName": "VS2022 x64 (LibTooling)",
+      "inherits": "vs2022-x64",
+      "binaryDir": "${sourceDir}/out/build-vs2022-libtooling",
+      "cacheVariables": {
+        "APISIG_SELF_CONTAINED": "OFF",
+        "APISIG_WITH_LIBTOOLING": "ON"
+      }
+    },
+    {
+      "name": "vs2022-x64-vcpkg",
+      "displayName": "VS2022 x64 with vcpkg toolchain",
+      "inherits": "vs2022-x64",
+      "binaryDir": "${sourceDir}/out/build-vs2022-vcpkg",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+      }
+    },
+    {
+      "name": "vs2022-x64-vcpkg-libtooling",
+      "displayName": "VS2022 x64 with vcpkg toolchain (LibTooling)",
+      "inherits": "vs2022-x64-libtooling",
+      "binaryDir": "${sourceDir}/out/build-vs2022-vcpkg-libtooling",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "build-release",
+      "displayName": "Build Release",
+      "configurePreset": "vs2022-x64",
+      "configuration": "Release"
+    },
+    {
+      "name": "build-release-libtooling",
+      "displayName": "Build Release (LibTooling)",
+      "configurePreset": "vs2022-x64-libtooling",
+      "configuration": "Release"
+    },
+    {
+      "name": "build-release-vcpkg",
+      "displayName": "Build Release (vcpkg)",
+      "configurePreset": "vs2022-x64-vcpkg",
+      "configuration": "Release"
+    },
+    {
+      "name": "build-release-vcpkg-libtooling",
+      "displayName": "Build Release (vcpkg + LibTooling)",
+      "configurePreset": "vs2022-x64-vcpkg-libtooling",
+      "configuration": "Release"
+    }
+  ]
+}
