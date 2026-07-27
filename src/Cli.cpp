@@ -7,6 +7,7 @@
 #include <iostream>
 #include <iterator>
 #include <optional>
+#include <algorithm>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -288,13 +289,17 @@ apisig::ComputeRequest BuildRequest(const CliOptions& options)
 
 void PrintSymbols(const std::vector<std::string>& symbols, bool json)
 {
+    std::vector<std::string> canonical = symbols;
+    std::sort(canonical.begin(), canonical.end());
+    canonical.erase(std::unique(canonical.begin(), canonical.end()), canonical.end());
+
     if (json)
     {
         std::cout << "{\n  \"symbols\": [\n";
-        for (std::size_t i = 0; i < symbols.size(); ++i)
+        for (std::size_t i = 0; i < canonical.size(); ++i)
         {
-            std::cout << "    \"" << EscapeJson(symbols[i]) << "\"";
-            if (i + 1 < symbols.size())
+            std::cout << "    \"" << EscapeJson(canonical[i]) << "\"";
+            if (i + 1 < canonical.size())
             {
                 std::cout << ',';
             }
@@ -304,7 +309,7 @@ void PrintSymbols(const std::vector<std::string>& symbols, bool json)
         return;
     }
 
-    for (const std::string& symbol : symbols)
+    for (const std::string& symbol : canonical)
     {
         std::cout << symbol << '\n';
     }
