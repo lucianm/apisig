@@ -18,7 +18,8 @@ enum class CommandType
 {
     Compute,
     Snapshot,
-    Compare
+    Compare,
+    Extract
 };
 
 struct CliOptions
@@ -93,7 +94,8 @@ void PrintUsage()
               << "Commands:\n"
               << "  compute   Compute signatures from current input\n"
               << "  snapshot  Compute signatures and write a baseline JSON\n"
-              << "  compare   Compute signatures and compare to a baseline JSON\n\n"
+              << "  compare   Compute signatures and compare to a baseline JSON\n"
+              << "  extract   Print normalized/extracted symbols used for hashing\n\n"
               << "Options:\n"
               << "  --symbols <file>     Public symbols file (one symbol per line)\n"
               << "  --metadata <file>    Metadata file (key=value per line)\n"
@@ -194,6 +196,10 @@ CliOptions ParseArguments(const std::vector<std::string>& args)
     {
         options.command = CommandType::Compare;
     }
+    else if (args[0] == "extract")
+    {
+        options.command = CommandType::Extract;
+    }
     else
     {
         throw std::runtime_error("Unknown command: " + args[0]);
@@ -280,6 +286,30 @@ apisig::ComputeRequest BuildRequest(const CliOptions& options)
     return request;
 }
 
+void PrintSymbols(const std::vector<std::string>& symbols, bool json)
+{
+    if (json)
+    {
+        std::cout << "{\n  \"symbols\": [\n";
+        for (std::size_t i = 0; i < symbols.size(); ++i)
+        {
+            std::cout << "    \"" << EscapeJson(symbols[i]) << "\"";
+            if (i + 1 < symbols.size())
+            {
+                std::cout << ',';
+            }
+            std::cout << '\n';
+        }
+        std::cout << "  ]\n}\n";
+        return;
+    }
+
+    for (const std::string& symbol : symbols)
+    {
+        std::cout << symbol << '\n';
+    }
+}
+
 void PrintResult(const apisig::SignaturePair& result, bool json)
 {
     if (json)
@@ -304,6 +334,33 @@ int RunCli(const std::vector<std::string>& args)
         }
 
         const CliOptions options = ParseArguments(args);
+
+        if (options.command == CommandType::Extract)
+        {
+            if (options.compdb.has_value())
+            {
+                if (!options.sourceRoot.has_value())
+                {
+                    throw std::runtime_error("--source-root is required when --compdb is provided");
+                }
+
+                const std::vector<std::string> symbols = apisig::ExtractPublicSymbolsFromCompilationDatabase(
+                    options.compdb.value(),
+                    options.sourceRoot.value());
+                PrintSymbols(symbols, options.json);
+                return ExitOk;
+            }
+
+            if (!options.symbolsFile.has_value())
+            {
+                throw std::runtime_error("--symbols is required when --compdb is not used");
+            }
+
+            const std::vector<std::string> symbols = apisig::ReadSymbolLines(options.symbolsFile.value());
+            PrintSymbols(symbols, options.json);
+            return ExitOk;
+        }
+
         const apisig::ComputeRequest request = BuildRequest(options);
         const apisig::SignaturePair result = apisig::ComputeSignatures(request);
 
