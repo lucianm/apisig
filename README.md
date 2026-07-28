@@ -25,6 +25,20 @@ cmake -S . -B out/build-libtooling -DAPISIG_SELF_CONTAINED=OFF -DAPISIG_WITH_LIB
 cmake --build out/build-libtooling --config Release
 ```
 
+Optional LibTooling-enabled flavor using an official prebuilt LLVM SDK downloaded during configure:
+
+```powershell
+cmake -S . -B out/build-libtooling-sdk -DAPISIG_SELF_CONTAINED=OFF -DAPISIG_WITH_LIBTOOLING=ON -DAPISIG_DOWNLOAD_LLVM_SDK=ON
+cmake --build out/build-libtooling-sdk --config Release
+```
+
+To use a previously downloaded or centrally provisioned LLVM SDK instead of the automatic download:
+
+```powershell
+cmake -S . -B out/build-libtooling-sdk -DAPISIG_SELF_CONTAINED=OFF -DAPISIG_WITH_LIBTOOLING=ON -DAPISIG_LLVM_ROOT="C:/toolcache/clang+llvm-22.1.8-x86_64-pc-windows-msvc"
+cmake --build out/build-libtooling-sdk --config Release
+```
+
 Native Visual Studio toolchain:
 
 ```powershell
@@ -45,6 +59,16 @@ LibTooling preset variant:
 cmake --preset vs2022-x64-libtooling
 cmake --build --preset build-release-libtooling
 ```
+
+Official LLVM SDK preset variant:
+
+```powershell
+cmake --preset vs2022-x64-llvm-sdk-libtooling
+cmake --build --preset build-release-llvm-sdk-libtooling
+```
+
+The auto-download preset caches the official LLVM SDK archive and extraction under `out/llvm-sdk/`.
+Use `APISIG_LLVM_SDK_VERSION`, `APISIG_LLVM_SDK_URL`, or `APISIG_LLVM_SDK_CACHE_DIR` to override the default source or cache location.
 
 Binary path:
 
@@ -89,6 +113,12 @@ Inspect clang-derived symbols from AST traversal:
 apisig extract --compdb compile_commands.json --source-root . --json
 ```
 
+Show command help explicitly:
+
+```powershell
+apisig --help
+```
+
 ## Extraction Modes And Trust Level
 
 apisig currently supports two different extraction modes. They are not equivalent in semantic precision.
@@ -127,6 +157,14 @@ Operational note:
 - LibTooling mode means apisig uses clang as a parser library.
 - It does not instrument your product code and does not force your product build to use clang.
 
+Strictness note:
+
+- By default, apisig applies a compatibility adjuster for MSVC-oriented compile flags (for example `/pathmap`) and avoids warning-as-error termination so extraction can proceed on mixed toolchains.
+- Use `--strict-tooling` with `--compdb` when you want the raw compilation arguments and warning policy with no compatibility relaxations.
+- In strict mode, keep extraction successful by adding explicit strip/suppression controls: `--tooling-strip-arg <prefix>` and `--tooling-suppress <warning>` (both repeatable).
+- Use `--tooling-suppress <warning>` (repeatable) to add explicit suppressions. Accepted forms include clang groups like `extern-c-compat`, clang flags like `-Wno-comment`, and MSVC warning codes like `C4100` / `4100`.
+- By default, apisig prints `LibTooling mode: strict|compatibility` to stderr for compdb extraction runs. Use `--no-tooling-banner` for machine pipelines that merge stderr into stdout.
+
 Recommendation:
 
 - treat file-driven mode as a CI-safe fallback
@@ -140,7 +178,7 @@ Symbols file:
 - blank lines ignored
 - C/C++ comments are stripped (`//...` and `/*...*/`)
 - C/C++ whitespace is normalized token-wise (formatting-only spacing changes are ignored)
-- lines beginning with `# ` (hash + space) are treated as human comment lines and ignored
+- lines beginning with `#` followed by a space are treated as human comment lines and ignored
 - preprocessor directives such as `#define` are included in hashing input
 - multiline macros (`\\` line continuation) are folded into one normalized logical line
 - duplicate symbols are de-duplicated
@@ -172,6 +210,34 @@ Current scaffold uses a stable 64-bit FNV-1a hash for deterministic output.
 - `1`: runtime/config/input error
 - `2`: usage error
 
+## Versioning
+
+- Project version source of truth: `project(apisig VERSION ...)` in [CMakeLists.txt](CMakeLists.txt).
+- CLI version output: `apisig --version` (also `-v`).
+- Recommended release model: Semantic Versioning (`MAJOR.MINOR.PATCH`).
+  - `MAJOR`: incompatible CLI or signature behavior changes.
+  - `MINOR`: backward-compatible feature additions.
+  - `PATCH`: bug fixes and non-breaking internal improvements.
+
+## License
+
+- Repository license text is in [LICENSE](LICENSE).
+- If you later switch to an open-source license, update [LICENSE](LICENSE) and this README together in the same commit.
+
+## Distribution And CI
+
+- Source-only distribution is always possible.
+- Binary distribution is also possible when license obligations are met.
+
+GitHub Actions usage:
+
+- Building apisig in GitHub Actions is generally allowed.
+- Do not redistribute Microsoft toolchain components (Visual Studio/MSVC/DIA files).
+- Redistributing your built `apisig` binary is typically fine, but you must comply with third-party license terms for linked dependencies (notably LLVM/Clang notices).
+- For public releases, include a license/notice bundle with artifacts.
+
+Note: this is technical guidance, not legal advice.
+
 ## Roadmap
 
 - implement Clang LibTooling AST extraction for public C/C++ symbols
@@ -185,10 +251,13 @@ Yes, dependencies can be downloaded automatically.
 Recommended options:
 
 - self-contained default for baseline CI agents (no clang payload required)
+- official LLVM SDK preset for a pinned LibTooling-capable build without vcpkg:
+  - use preset `vs2022-x64-llvm-sdk-libtooling`
+  - or set `APISIG_DOWNLOAD_LLVM_SDK=ON` directly
 - vcpkg toolchain mode when enabling LibTooling (best for Windows CI and Visual Studio):
   - set `VCPKG_ROOT`
   - use preset `vs2022-x64-vcpkg-libtooling`
 - CMake `FetchContent` for smaller pure-CMake dependencies
 
-For LibTooling specifically, vcpkg or preinstalled LLVM/Clang packages are the practical options.
+For LibTooling specifically, the practical options are the official prebuilt LLVM SDK, vcpkg, or preinstalled LLVM/Clang packages.
 If agents do not have clang payloads, use the self-contained presets and feed symbol lists via `--symbols`.

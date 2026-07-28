@@ -44,6 +44,15 @@
       "cacheVariables": {
         "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
       }
+    },
+    {
+      "name": "vs2022-x64-llvm-sdk-libtooling",
+      "displayName": "VS2022 x64 with official LLVM SDK (LibTooling)",
+      "inherits": "vs2022-x64-libtooling",
+      "binaryDir": "${sourceDir}/out/build-vs2022-llvm-sdk-libtooling",
+      "cacheVariables": {
+        "APISIG_DOWNLOAD_LLVM_SDK": "ON"
+      }
     }
   ],
   "buildPresets": [
@@ -69,6 +78,12 @@
       "name": "build-release-vcpkg-libtooling",
       "displayName": "Build Release (vcpkg + LibTooling)",
       "configurePreset": "vs2022-x64-vcpkg-libtooling",
+      "configuration": "Release"
+    },
+    {
+      "name": "build-release-llvm-sdk-libtooling",
+      "displayName": "Build Release (official LLVM SDK + LibTooling)",
+      "configurePreset": "vs2022-x64-llvm-sdk-libtooling",
       "configuration": "Release"
     }
   ]

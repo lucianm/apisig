@@ -33,6 +33,12 @@ struct CliOptions
     std::optional<std::filesystem::path> outputFile;
     std::optional<std::filesystem::path> baselineFile;
     bool json = false;
+    bool strictTooling = false;
+    bool noToolingBanner = false;
+    bool help = false;
+    bool version = false;
+    std::vector<std::string> toolingStripArgPrefixes;
+    std::vector<std::string> toolingSuppressions;
 };
 
 struct Baseline
@@ -49,6 +55,8 @@ enum ExitCode
     ExitApiChanged = 10,
     ExitRebuildChanged = 11
 };
+
+void PrintToolingModeBanner(bool strictTooling);
 
 std::string EscapeJson(std::string_view value)
 {
@@ -104,7 +112,18 @@ void PrintUsage()
               << "  --source-root <dir>  Source root used with --compdb\n"
               << "  --out <file>         Snapshot output JSON path (snapshot only)\n"
               << "  --baseline <file>    Baseline JSON path (compare only)\n"
-              << "  --json               Print JSON output\n";
+              << "  --json               Print JSON output\n"
+              << "  --strict-tooling     Keep original compile flags and warning policy\n"
+              << "  --tooling-strip-arg <prefix>  Strip matching compile args (repeatable)\n"
+              << "  --tooling-suppress <warning>  Add explicit tooling suppression (repeatable)\n"
+              << "  --no-tooling-banner  Do not print LibTooling mode banner\n"
+              << "  --version, -v        Show apisig version\n"
+              << "  --help, -h           Show this help message\n";
+}
+
+void PrintVersion()
+{
+    std::cout << "apisig " << APISIG_VERSION << '\n';
 }
 
 std::string ReadAllText(const std::filesystem::path& path)
@@ -184,6 +203,20 @@ CliOptions ParseArguments(const std::vector<std::string>& args)
         throw std::runtime_error("Missing command. Use compute, snapshot, or compare.");
     }
 
+    if (args[0] == "--help" || args[0] == "-h" || args[0] == "help")
+    {
+        CliOptions options;
+        options.help = true;
+        return options;
+    }
+
+    if (args[0] == "--version" || args[0] == "-v" || args[0] == "version")
+    {
+        CliOptions options;
+        options.version = true;
+        return options;
+    }
+
     CliOptions options;
     if (args[0] == "compute")
     {
@@ -246,6 +279,30 @@ CliOptions ParseArguments(const std::vector<std::string>& args)
         {
             options.json = true;
         }
+        else if (arg == "--strict-tooling")
+        {
+            options.strictTooling = true;
+        }
+        else if (arg == "--tooling-strip-arg")
+        {
+            options.toolingStripArgPrefixes.push_back(requireValue(arg));
+        }
+        else if (arg == "--tooling-suppress")
+        {
+            options.toolingSuppressions.push_back(requireValue(arg));
+        }
+        else if (arg == "--no-tooling-banner")
+        {
+            options.noToolingBanner = true;
+        }
+        else if (arg == "--help" || arg == "-h")
+        {
+            options.help = true;
+        }
+        else if (arg == "--version" || arg == "-v")
+        {
+            options.version = true;
+        }
         else
         {
             throw std::runtime_error("Unknown option: " + arg);
@@ -266,9 +323,17 @@ apisig::ComputeRequest BuildRequest(const CliOptions& options)
             throw std::runtime_error("--source-root is required when --compdb is provided");
         }
 
+        if (!options.noToolingBanner)
+        {
+            PrintToolingModeBanner(options.strictTooling);
+        }
+
         request.symbols = apisig::ExtractPublicSymbolsFromCompilationDatabase(
             options.compdb.value(),
-            options.sourceRoot.value());
+            options.sourceRoot.value(),
+            options.strictTooling,
+            options.toolingStripArgPrefixes,
+            options.toolingSuppressions);
     }
     else
     {
@@ -326,6 +391,13 @@ void PrintResult(const apisig::SignaturePair& result, bool json)
     std::cout << "api_hash=" << result.apiHash << '\n';
     std::cout << "rebuild_hash=" << result.rebuildHash << '\n';
 }
+
+void PrintToolingModeBanner(bool strictTooling)
+{
+    std::cerr << "apisig: LibTooling mode: "
+              << (strictTooling ? "strict" : "compatibility")
+              << '\n';
+}
 } // namespace
 
 int RunCli(const std::vector<std::string>& args)
@@ -339,6 +411,16 @@ int RunCli(const std::vector<std::string>& args)
         }
 
         const CliOptions options = ParseArguments(args);
+        if (options.help)
+        {
+            PrintUsage();
+            return ExitOk;
+        }
+        if (options.version)
+        {
+            PrintVersion();
+            return ExitOk;
+        }
 
         if (options.command == CommandType::Extract)
         {
@@ -349,9 +431,17 @@ int RunCli(const std::vector<std::string>& args)
                     throw std::runtime_error("--source-root is required when --compdb is provided");
                 }
 
+                if (!options.noToolingBanner)
+                {
+                    PrintToolingModeBanner(options.strictTooling);
+                }
+
                 const std::vector<std::string> symbols = apisig::ExtractPublicSymbolsFromCompilationDatabase(
                     options.compdb.value(),
-                    options.sourceRoot.value());
+                    options.sourceRoot.value(),
+                    options.strictTooling,
+                    options.toolingStripArgPrefixes,
+                    options.toolingSuppressions);
                 PrintSymbols(symbols, options.json);
                 return ExitOk;
             }
