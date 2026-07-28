@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://apisig.dev/schemas/ast-report-v1.json",
+  "title": "apisig AST Report",
+  "type": "object",
+  "required": [
+    "schema",
+    "format_version",
+    "symbols",
+    "semantic_model",
+    "declarations",
+    "summary"
+  ],
+  "properties": {
+    "schema": {
+      "const": "apisig.ast-report.v1"
+    },
+    "format_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "symbols": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "semantic_model": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 1
+    },
+    "declarations": {
+      "type": "array"
+    },
+    "summary": {
+      "type": "object",
+      "required": [
+        "symbol_count",
+        "semantic_record_count",
+        "declaration_count"
+      ],
+      "properties": {
+        "symbol_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "semantic_record_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "declaration_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}

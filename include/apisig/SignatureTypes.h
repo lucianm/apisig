@@ -14,6 +14,7 @@ struct SignaturePair
 struct ComputeRequest
 {
     std::vector<std::string> symbols;
+    std::vector<std::string> semanticModel;
     std::vector<std::pair<std::string, std::string>> metadata;
 };
 } // namespace apisig

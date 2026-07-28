@@ -223,3 +223,36 @@ if(MSVC)
     set_target_properties(apisig PROPERTIES
     MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()
+
+include(CTest)
+if(BUILD_TESTING AND APISIG_LIBTOOLING_ENABLED)
+    add_test(
+        NAME apisig.compdb_hash_edge_cases
+        COMMAND ${CMAKE_COMMAND}
+            -DAPISIG_EXE=$<TARGET_FILE:apisig>
+            -DFIXTURE_DIR=${CMAKE_SOURCE_DIR}/tests/fixtures
+            -DWORK_DIR=${CMAKE_BINARY_DIR}/tests/compdb-hash-edge-cases
+            -P ${CMAKE_SOURCE_DIR}/tests/run_compdb_hash_edge_cases.cmake)
+
+    add_test(
+        NAME apisig.semantic_change_detection
+        COMMAND ${CMAKE_COMMAND}
+            -DAPISIG_EXE=$<TARGET_FILE:apisig>
+            -DWORK_DIR=${CMAKE_BINARY_DIR}/tests/semantic-change-detection
+            -P ${CMAKE_SOURCE_DIR}/tests/run_semantic_change_detection.cmake)
+
+    add_test(
+        NAME apisig.semantic_model_deserialization
+        COMMAND ${CMAKE_COMMAND}
+            -DAPISIG_EXE=$<TARGET_FILE:apisig>
+            -DFIXTURE_DIR=${CMAKE_SOURCE_DIR}/tests/fixtures
+            -DWORK_DIR=${CMAKE_BINARY_DIR}/tests/semantic-model-deserialization
+            -P ${CMAKE_SOURCE_DIR}/tests/run_semantic_model_deserialization.cmake)
+
+    add_test(
+        NAME apisig.semantic_model_compare
+        COMMAND ${CMAKE_COMMAND}
+            -DAPISIG_EXE=$<TARGET_FILE:apisig>
+            -DWORK_DIR=${CMAKE_BINARY_DIR}/tests/semantic-model-compare
+            -P ${CMAKE_SOURCE_DIR}/tests/run_semantic_model_compare.cmake)
+endif()

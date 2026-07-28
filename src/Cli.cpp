@@ -32,6 +32,9 @@ struct CliOptions
     std::optional<std::filesystem::path> sourceRoot;
     std::optional<std::filesystem::path> outputFile;
     std::optional<std::filesystem::path> baselineFile;
+    std::optional<std::filesystem::path> baselineAstReportJson;
+    std::optional<std::filesystem::path> astReportOut;
+    std::optional<std::filesystem::path> astReportJson;
     bool json = false;
     bool strictTooling = false;
     bool noToolingBanner = false;
@@ -44,7 +47,7 @@ struct CliOptions
 struct Baseline
 {
     std::string apiHash;
-    std::string rebuildHash;
+    std::optional<std::string> rebuildHash;
 };
 
 enum ExitCode
@@ -101,18 +104,24 @@ void PrintUsage()
 {
     std::cout << "apisig <command> [options]\n\n"
               << "Commands:\n"
-              << "  compute   Compute signatures from current input\n"
-              << "  snapshot  Compute signatures and write a baseline JSON\n"
-              << "  compare   Compute signatures and compare to a baseline JSON\n"
-              << "  extract   Print normalized/extracted symbols used for hashing\n\n"
-              << "Options:\n"
-              << "  --symbols <file>     Public symbols file (one symbol per line)\n"
-              << "  --metadata <file>    Metadata file (key=value per line)\n"
-              << "  --compdb <file>      compile_commands.json for LibTooling mode\n"
+              << "  compute   Compute api_hash and rebuild_hash from one input mode\n"
+              << "  snapshot  Compute signatures and write the hash pair as baseline JSON\n"
+              << "  compare   Compute current signatures and compare them to a baseline JSON\n"
+              << "  extract   Print normalized symbols to stdout; optionally also write an AST report JSON\n\n"
+              << "Input options (choose one input mode for compute/snapshot/compare):\n"
+              << "  --symbols <file>     Text input: one symbol/declaration line per entry\n"
+              << "  --compdb <file>      LibTooling input: compile_commands.json\n"
+              << "  --ast-report-json <file>  AST report JSON carrying semantic_model\n"
               << "  --source-root <dir>  Source root used with --compdb\n"
-              << "  --out <file>         Snapshot output JSON path (snapshot only)\n"
-              << "  --baseline <file>    Baseline JSON path (compare only)\n"
-              << "  --json               Print JSON output\n"
+              << "  --metadata <file>    Metadata key=value file affecting rebuild_hash only\n\n"
+              << "Artifact file options:\n"
+              << "  --out <file>         Write snapshot baseline JSON (snapshot only)\n"
+              << "  --baseline <file>    Read baseline hash JSON (compare only)\n"
+              << "  --baseline-ast-report-json <file>  Read baseline API from an AST report JSON (compare only)\n"
+              << "  --ast-report-out <file>  Write AST report JSON during compdb extraction\n\n"
+              << "Stdout formatting:\n"
+              << "  --json               Print the command result to stdout as JSON\n\n"
+              << "Tooling controls:\n"
               << "  --strict-tooling     Keep original compile flags and warning policy\n"
               << "  --tooling-strip-arg <prefix>  Strip matching compile args (repeatable)\n"
               << "  --tooling-suppress <warning>  Add explicit tooling suppression (repeatable)\n"
@@ -137,6 +146,166 @@ std::string ReadAllText(const std::filesystem::path& path)
     return std::string(
         std::istreambuf_iterator<char>(input),
         std::istreambuf_iterator<char>());
+}
+
+void WriteAstReportJson(const std::filesystem::path& path, const apisig::ExtractionReport& report)
+{
+     std::ofstream output(path);
+     if (!output)
+     {
+          throw std::runtime_error("Could not write AST report file: " + path.string());
+     }
+
+     std::vector<std::string> canonicalSymbols = report.symbols;
+     std::sort(canonicalSymbols.begin(), canonicalSymbols.end());
+     canonicalSymbols.erase(std::unique(canonicalSymbols.begin(), canonicalSymbols.end()), canonicalSymbols.end());
+
+    output << "{\n"
+              "  \"schema\": \"apisig.ast-report.v1\",\n"
+              "  \"format_version\": 1,\n"
+                  "  \"symbols\": [\n";
+     for (std::size_t i = 0; i < canonicalSymbols.size(); ++i)
+     {
+          output << "    \"" << EscapeJson(canonicalSymbols[i]) << "\"";
+          if (i + 1 < canonicalSymbols.size())
+          {
+                output << ',';
+          }
+          output << '\n';
+     }
+     output << "  ],\n"
+                 "  \"semantic_model\": [\n";
+         for (std::size_t i = 0; i < report.semanticModel.size(); ++i)
+         {
+            output << "    \"" << EscapeJson(report.semanticModel[i]) << "\"";
+            if (i + 1 < report.semanticModel.size())
+            {
+                output << ',';
+            }
+            output << '\n';
+         }
+         output << "  ],\n"
+                  "  \"declarations\": [\n";
+
+    auto writeStringArray = [&](const std::vector<std::string>& values, const char* fieldName, const char* indent) {
+        output << indent << "\"" << fieldName << "\": [";
+        if (!values.empty())
+        {
+            output << '\n';
+            for (std::size_t index = 0; index < values.size(); ++index)
+            {
+                output << indent << "  \"" << EscapeJson(values[index]) << "\"";
+                if (index + 1 < values.size())
+                {
+                    output << ',';
+                }
+                output << '\n';
+            }
+            output << indent << ']';
+            return;
+        }
+
+        output << ']';
+    };
+
+     for (std::size_t i = 0; i < report.declarations.size(); ++i)
+     {
+          const auto& declaration = report.declarations[i];
+          output << "    {\n"
+                        "      \"symbol\": \""
+                    << EscapeJson(declaration.symbol)
+                    << "\",\n"
+                        "      \"kind\": \""
+                    << EscapeJson(declaration.kind)
+                    << "\",\n"
+                        "      \"usr\": \""
+                    << EscapeJson(declaration.usr)
+                    << "\",\n"
+                        "      \"qualified_name\": \""
+                    << EscapeJson(declaration.qualifiedName)
+                    << "\",\n"
+                          "      \"api_signature\": \""
+                       << EscapeJson(declaration.apiSignature)
+                       << "\",\n"
+                        "      \"file\": \""
+                    << EscapeJson(declaration.file)
+                    << "\",\n"
+                        "      \"line\": "
+                    << declaration.line
+                    << ",\n"
+                        "      \"column\": "
+                       << declaration.column
+                       << ",\n";
+
+                output << "      \"enum_values\": [";
+                if (!declaration.enumValues.empty())
+                {
+                    output << '\n';
+                    for (std::size_t enumIndex = 0; enumIndex < declaration.enumValues.size(); ++enumIndex)
+                    {
+                        const auto& enumValue = declaration.enumValues[enumIndex];
+                        output << "        {\"name\": \"" << EscapeJson(enumValue.name) << "\", \"value\": \""
+                               << EscapeJson(enumValue.value) << "\"}";
+                        if (enumIndex + 1 < declaration.enumValues.size())
+                        {
+                            output << ',';
+                        }
+                        output << '\n';
+                    }
+                    output << "      ],\n";
+                }
+                else
+                {
+                    output << "],\n";
+                }
+
+                writeStringArray(declaration.baseTypes, "base_types", "      ");
+                output << ",\n";
+
+                output << "      \"fields\": [";
+                if (!declaration.fields.empty())
+                {
+                    output << '\n';
+                    for (std::size_t fieldIndex = 0; fieldIndex < declaration.fields.size(); ++fieldIndex)
+                    {
+                        const auto& field = declaration.fields[fieldIndex];
+                        output << "        {\"name\": \"" << EscapeJson(field.name) << "\", \"type\": \""
+                               << EscapeJson(field.type) << "\"}";
+                        if (fieldIndex + 1 < declaration.fields.size())
+                        {
+                            output << ',';
+                        }
+                        output << '\n';
+                    }
+                    output << "      ],\n";
+                }
+                else
+                {
+                    output << "],\n";
+                }
+
+                writeStringArray(declaration.methodSignatures, "method_signatures", "      ");
+                output << "\n"
+                          "    }";
+          if (i + 1 < report.declarations.size())
+          {
+                output << ',';
+          }
+          output << '\n';
+     }
+     output << "  ],\n"
+                  "  \"summary\": {\n"
+                  "    \"symbol_count\": "
+              << canonicalSymbols.size()
+              << ",\n"
+                 "    \"semantic_record_count\": "
+              << report.semanticModel.size()
+              << ",\n"
+                  "    \"declaration_count\": "
+              << report.declarations.size()
+              << "\n"
+                  "  }\n"
+                  "}\n";
 }
 
 std::string ExtractJsonString(const std::string& json, const std::string& key)
@@ -175,6 +344,134 @@ Baseline ReadBaseline(const std::filesystem::path& path)
     return Baseline{
         ExtractJsonString(content, "api_hash"),
         ExtractJsonString(content, "rebuild_hash")};
+}
+
+Baseline ReadSemanticModelBaseline(const std::filesystem::path& path)
+{
+    apisig::ComputeRequest request;
+    request.semanticModel = apisig::ReadSemanticModelFromAstReport(path);
+
+    const apisig::SignaturePair result = apisig::ComputeSignatures(request);
+    return Baseline{result.apiHash, std::nullopt};
+}
+
+int CountSelectedInputModes(const CliOptions& options)
+{
+    int count = 0;
+    if (options.symbolsFile.has_value())
+    {
+        ++count;
+    }
+    if (options.compdb.has_value())
+    {
+        ++count;
+    }
+    if (options.astReportJson.has_value())
+    {
+        ++count;
+    }
+    return count;
+}
+
+void ValidateOptions(const CliOptions& options)
+{
+    if (options.command != CommandType::Extract && options.astReportOut.has_value())
+    {
+        throw std::runtime_error("--ast-report-out is supported only with the extract command");
+    }
+
+    if (options.command == CommandType::Extract)
+    {
+        if (options.astReportJson.has_value())
+        {
+            throw std::runtime_error("--ast-report-json is not supported with the extract command");
+        }
+
+        if (options.metadataFile.has_value())
+        {
+            throw std::runtime_error("--metadata is not supported with the extract command");
+        }
+
+        if (options.outputFile.has_value())
+        {
+            throw std::runtime_error("--out is supported only with the snapshot command");
+        }
+
+        if (options.baselineFile.has_value())
+        {
+            throw std::runtime_error("--baseline is supported only with the compare command");
+        }
+
+        if (options.baselineAstReportJson.has_value())
+        {
+            throw std::runtime_error("--baseline-ast-report-json is supported only with the compare command");
+        }
+
+        if (CountSelectedInputModes(options) != 1)
+        {
+            throw std::runtime_error("extract requires exactly one input mode: --symbols or --compdb");
+        }
+
+        if (options.compdb.has_value() && !options.sourceRoot.has_value())
+        {
+            throw std::runtime_error("--source-root is required when --compdb is provided");
+        }
+
+        if (!options.compdb.has_value() && options.sourceRoot.has_value())
+        {
+            throw std::runtime_error("--source-root is only valid together with --compdb");
+        }
+
+        return;
+    }
+
+    if (options.sourceRoot.has_value() && !options.compdb.has_value())
+    {
+        throw std::runtime_error("--source-root is only valid together with --compdb");
+    }
+
+    if (options.command != CommandType::Snapshot && options.outputFile.has_value())
+    {
+        throw std::runtime_error("--out is supported only with the snapshot command");
+    }
+
+    if (options.command != CommandType::Compare && options.baselineFile.has_value())
+    {
+        throw std::runtime_error("--baseline is supported only with the compare command");
+    }
+
+    if (options.command != CommandType::Compare && options.baselineAstReportJson.has_value())
+    {
+        throw std::runtime_error("--baseline-ast-report-json is supported only with the compare command");
+    }
+
+    if (CountSelectedInputModes(options) != 1)
+    {
+        throw std::runtime_error(
+            "compute, snapshot, and compare require exactly one input mode: --symbols, --compdb, or --ast-report-json");
+    }
+
+    if (options.compdb.has_value() && !options.sourceRoot.has_value())
+    {
+        throw std::runtime_error("--source-root is required when --compdb is provided");
+    }
+
+    if (options.command == CommandType::Compare)
+    {
+        const int baselineModeCount = (options.baselineFile.has_value() ? 1 : 0)
+                                    + (options.baselineAstReportJson.has_value() ? 1 : 0);
+        if (baselineModeCount != 1)
+        {
+            throw std::runtime_error(
+                "compare requires exactly one baseline mode: --baseline or --baseline-ast-report-json");
+        }
+
+        if (options.baselineAstReportJson.has_value() && options.metadataFile.has_value())
+        {
+            throw std::runtime_error(
+                "--metadata is not supported when compare uses --baseline-ast-report-json because rebuild_hash is not comparable in that mode");
+        }
+    }
 }
 
 void WriteSnapshot(const std::filesystem::path& path, const apisig::SignaturePair& result)
@@ -275,6 +572,18 @@ CliOptions ParseArguments(const std::vector<std::string>& args)
         {
             options.baselineFile = requireValue(arg);
         }
+        else if (arg == "--baseline-ast-report-json")
+        {
+            options.baselineAstReportJson = requireValue(arg);
+        }
+        else if (arg == "--ast-report-out")
+        {
+            options.astReportOut = requireValue(arg);
+        }
+        else if (arg == "--ast-report-json")
+        {
+            options.astReportJson = requireValue(arg);
+        }
         else if (arg == "--json")
         {
             options.json = true;
@@ -316,6 +625,11 @@ apisig::ComputeRequest BuildRequest(const CliOptions& options)
 {
     apisig::ComputeRequest request;
 
+    if (options.astReportJson.has_value())
+    {
+        request.semanticModel = apisig::ReadSemanticModelFromAstReport(options.astReportJson.value());
+    }
+
     if (options.compdb.has_value())
     {
         if (!options.sourceRoot.has_value())
@@ -328,19 +642,17 @@ apisig::ComputeRequest BuildRequest(const CliOptions& options)
             PrintToolingModeBanner(options.strictTooling);
         }
 
-        request.symbols = apisig::ExtractPublicSymbolsFromCompilationDatabase(
+        const apisig::ExtractionReport report = apisig::ExtractReportFromCompilationDatabase(
             options.compdb.value(),
             options.sourceRoot.value(),
             options.strictTooling,
             options.toolingStripArgPrefixes,
             options.toolingSuppressions);
+        request.symbols = report.symbols;
+        request.semanticModel = report.semanticModel;
     }
-    else
+    else if (options.symbolsFile.has_value())
     {
-        if (!options.symbolsFile.has_value())
-        {
-            throw std::runtime_error("--symbols is required when --compdb is not used");
-        }
         request.symbols = apisig::ReadSymbolLines(options.symbolsFile.value());
     }
 
@@ -422,33 +734,29 @@ int RunCli(const std::vector<std::string>& args)
             return ExitOk;
         }
 
+        ValidateOptions(options);
+
         if (options.command == CommandType::Extract)
         {
             if (options.compdb.has_value())
             {
-                if (!options.sourceRoot.has_value())
-                {
-                    throw std::runtime_error("--source-root is required when --compdb is provided");
-                }
-
                 if (!options.noToolingBanner)
                 {
                     PrintToolingModeBanner(options.strictTooling);
                 }
 
-                const std::vector<std::string> symbols = apisig::ExtractPublicSymbolsFromCompilationDatabase(
+                const apisig::ExtractionReport report = apisig::ExtractReportFromCompilationDatabase(
                     options.compdb.value(),
                     options.sourceRoot.value(),
                     options.strictTooling,
                     options.toolingStripArgPrefixes,
                     options.toolingSuppressions);
-                PrintSymbols(symbols, options.json);
+                if (options.astReportOut.has_value())
+                {
+                    WriteAstReportJson(options.astReportOut.value(), report);
+                }
+                PrintSymbols(report.symbols, options.json);
                 return ExitOk;
-            }
-
-            if (!options.symbolsFile.has_value())
-            {
-                throw std::runtime_error("--symbols is required when --compdb is not used");
             }
 
             const std::vector<std::string> symbols = apisig::ReadSymbolLines(options.symbolsFile.value());
@@ -485,15 +793,12 @@ int RunCli(const std::vector<std::string>& args)
             return ExitOk;
         }
 
-        if (!options.baselineFile.has_value())
-        {
-            throw std::runtime_error("--baseline is required for compare command");
-        }
-
-        const Baseline baseline = ReadBaseline(options.baselineFile.value());
+        const Baseline baseline = options.baselineAstReportJson.has_value()
+                          ? ReadSemanticModelBaseline(options.baselineAstReportJson.value())
+                                      : ReadBaseline(options.baselineFile.value());
 
         const bool apiChanged = (result.apiHash != baseline.apiHash);
-        const bool rebuildChanged = (result.rebuildHash != baseline.rebuildHash);
+        const bool rebuildChanged = baseline.rebuildHash.has_value() && (result.rebuildHash != baseline.rebuildHash.value());
 
         if (options.json)
         {
@@ -507,14 +812,25 @@ int RunCli(const std::vector<std::string>& args)
                       << "  \"status\": \"" << status << "\",\n"
                       << "  \"current\": " << currentJson << ",\n"
                       << "  \"baseline\": {\n"
-                      << "    \"api_hash\": \"" << baseline.apiHash << "\",\n"
-                      << "    \"rebuild_hash\": \"" << baseline.rebuildHash << "\"\n"
-                      << "  }\n"
+                      << "    \"api_hash\": \"" << baseline.apiHash << "\"";
+            if (baseline.rebuildHash.has_value())
+            {
+                std::cout << ",\n"
+                          << "    \"rebuild_hash\": \"" << baseline.rebuildHash.value() << "\"\n";
+            }
+            else
+            {
+                std::cout << "\n";
+            }
+            std::cout << "  }\n"
                       << "}\n";
         }
         else
         {
-            std::cout << "baseline=" << options.baselineFile.value().string() << '\n';
+            const std::filesystem::path baselinePath = options.baselineAstReportJson.has_value()
+                                                           ? options.baselineAstReportJson.value()
+                                                           : options.baselineFile.value();
+            std::cout << "baseline=" << baselinePath.string() << '\n';
             if (!apiChanged && !rebuildChanged)
             {
                 std::cout << "status=unchanged\n";
@@ -530,8 +846,15 @@ int RunCli(const std::vector<std::string>& args)
 
             std::cout << "baseline_api_hash=" << baseline.apiHash << '\n';
             std::cout << "current_api_hash=" << result.apiHash << '\n';
-            std::cout << "baseline_rebuild_hash=" << baseline.rebuildHash << '\n';
-            std::cout << "current_rebuild_hash=" << result.rebuildHash << '\n';
+            if (baseline.rebuildHash.has_value())
+            {
+                std::cout << "baseline_rebuild_hash=" << baseline.rebuildHash.value() << '\n';
+                std::cout << "current_rebuild_hash=" << result.rebuildHash << '\n';
+            }
+            else
+            {
+                std::cout << "rebuild_hash_comparison=unavailable\n";
+            }
         }
 
         if (apiChanged)

@@ -13,6 +13,7 @@
       "architecture": "x64",
       "binaryDir": "${sourceDir}/out/build-vs2022",
       "cacheVariables": {
+        "CMAKE_SYSTEM_VERSION": "10.0.26100.0",
         "APISIG_SELF_CONTAINED": "ON",
         "APISIG_WITH_LIBTOOLING": "OFF"
       }

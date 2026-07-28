@@ -20,6 +20,18 @@ std::string BuildApiPayload(const std::vector<std::string>& symbols)
     return oss.str();
 }
 
+std::string BuildSemanticPayload(const std::vector<std::string>& semanticModel)
+{
+    std::set<std::string> normalized(semanticModel.begin(), semanticModel.end());
+
+    std::ostringstream oss;
+    for (const std::string& semanticRecord : normalized)
+    {
+        oss << semanticRecord << '\n';
+    }
+    return oss.str();
+}
+
 std::string BuildRebuildPayload(
     const std::string& apiHash,
     const std::vector<std::pair<std::string, std::string>>& metadata)
@@ -38,7 +50,9 @@ namespace apisig
 {
 SignaturePair ComputeSignatures(const ComputeRequest& request)
 {
-    const std::string apiPayload = BuildApiPayload(request.symbols);
+    const std::string apiPayload = request.semanticModel.empty()
+                                       ? BuildApiPayload(request.symbols)
+                                       : BuildSemanticPayload(request.semanticModel);
     const std::string apiHash = StableHashHex64(apiPayload);
 
     const std::string rebuildPayload = BuildRebuildPayload(apiHash, request.metadata);

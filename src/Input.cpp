@@ -4,6 +4,7 @@
 #include <cctype>
 #include <fstream>
 #include <map>
+#include <sstream>
 #include <stdexcept>
 
 namespace
@@ -210,6 +211,184 @@ std::vector<std::string> ReadLines(const std::filesystem::path& filePath)
     }
     return lines;
 }
+
+std::string ReadAllText(const std::filesystem::path& filePath)
+{
+    std::ifstream input(filePath);
+    if (!input)
+    {
+        throw std::runtime_error("Could not open file: " + filePath.string());
+    }
+
+    std::ostringstream buffer;
+    buffer << input.rdbuf();
+    return buffer.str();
+}
+
+void SkipWhitespace(const std::string& json, std::size_t& position)
+{
+    while (position < json.size() && std::isspace(static_cast<unsigned char>(json[position])) != 0)
+    {
+        ++position;
+    }
+}
+
+std::string ParseJsonString(const std::string& json, std::size_t& position)
+{
+    if (position >= json.size() || json[position] != '"')
+    {
+        throw std::runtime_error("Invalid JSON: expected string value");
+    }
+    ++position;
+
+    std::string value;
+    while (position < json.size())
+    {
+        const char ch = json[position++];
+        if (ch == '"')
+        {
+            return value;
+        }
+
+        if (ch != '\\')
+        {
+            value.push_back(ch);
+            continue;
+        }
+
+        if (position >= json.size())
+        {
+            throw std::runtime_error("Invalid JSON: unterminated escape sequence");
+        }
+
+        const char escaped = json[position++];
+        switch (escaped)
+        {
+        case '"':
+            value.push_back('"');
+            break;
+        case '\\':
+            value.push_back('\\');
+            break;
+        case '/':
+            value.push_back('/');
+            break;
+        case 'b':
+            value.push_back('\b');
+            break;
+        case 'f':
+            value.push_back('\f');
+            break;
+        case 'n':
+            value.push_back('\n');
+            break;
+        case 'r':
+            value.push_back('\r');
+            break;
+        case 't':
+            value.push_back('\t');
+            break;
+        default:
+            throw std::runtime_error("Invalid JSON: unsupported escape sequence in semantic model report");
+        }
+    }
+
+    throw std::runtime_error("Invalid JSON: unterminated string value");
+}
+
+std::size_t FindPropertyValueStart(const std::string& json, const std::string& key)
+{
+    const std::string needle = "\"" + key + "\"";
+    const std::size_t keyPos = json.find(needle);
+    if (keyPos == std::string::npos)
+    {
+        throw std::runtime_error("Invalid AST report: missing required key '" + key + "'");
+    }
+
+    const std::size_t colonPos = json.find(':', keyPos + needle.size());
+    if (colonPos == std::string::npos)
+    {
+        throw std::runtime_error("Invalid AST report: malformed key '" + key + "'");
+    }
+
+    std::size_t valuePos = colonPos + 1;
+    SkipWhitespace(json, valuePos);
+    if (valuePos >= json.size())
+    {
+        throw std::runtime_error("Invalid AST report: missing value for key '" + key + "'");
+    }
+
+    return valuePos;
+}
+
+int ParsePositiveInt(const std::string& json, std::size_t& position)
+{
+    SkipWhitespace(json, position);
+    if (position >= json.size() || !std::isdigit(static_cast<unsigned char>(json[position])))
+    {
+        throw std::runtime_error("Invalid AST report: expected integer format_version");
+    }
+
+    int value = 0;
+    while (position < json.size() && std::isdigit(static_cast<unsigned char>(json[position])) != 0)
+    {
+        value = (value * 10) + (json[position] - '0');
+        ++position;
+    }
+
+    return value;
+}
+
+std::vector<std::string> ParseStringArray(const std::string& json, std::size_t& position)
+{
+    SkipWhitespace(json, position);
+    if (position >= json.size() || json[position] != '[')
+    {
+        throw std::runtime_error("Invalid AST report: semantic_model must be an array");
+    }
+    ++position;
+
+    std::vector<std::string> values;
+    SkipWhitespace(json, position);
+    if (position < json.size() && json[position] == ']')
+    {
+        ++position;
+        return values;
+    }
+
+    while (position < json.size())
+    {
+        SkipWhitespace(json, position);
+        std::string value = ParseJsonString(json, position);
+        if (value.empty())
+        {
+            throw std::runtime_error("Invalid AST report: semantic_model entries must not be empty");
+        }
+        values.push_back(std::move(value));
+
+        SkipWhitespace(json, position);
+        if (position >= json.size())
+        {
+            break;
+        }
+
+        if (json[position] == ',')
+        {
+            ++position;
+            continue;
+        }
+
+        if (json[position] == ']')
+        {
+            ++position;
+            return values;
+        }
+
+        throw std::runtime_error("Invalid AST report: malformed semantic_model array");
+    }
+
+    throw std::runtime_error("Invalid AST report: unterminated semantic_model array");
+}
 } // namespace
 
 namespace apisig
@@ -305,5 +484,34 @@ std::vector<std::pair<std::string, std::string>> ReadMetadata(const std::filesys
     }
 
     return {values.begin(), values.end()};
+}
+
+std::vector<std::string> ReadSemanticModelFromAstReport(const std::filesystem::path& filePath)
+{
+    const std::string json = ReadAllText(filePath);
+
+    std::size_t schemaPos = FindPropertyValueStart(json, "schema");
+    const std::string schema = ParseJsonString(json, schemaPos);
+    if (schema != "apisig.ast-report.v1")
+    {
+        throw std::runtime_error(
+            "Invalid AST report schema: expected 'apisig.ast-report.v1', got '" + schema + "'");
+    }
+
+    std::size_t versionPos = FindPropertyValueStart(json, "format_version");
+    const int version = ParsePositiveInt(json, versionPos);
+    if (version != 1)
+    {
+        throw std::runtime_error("Unsupported AST report format_version: " + std::to_string(version));
+    }
+
+    std::size_t semanticPos = FindPropertyValueStart(json, "semantic_model");
+    std::vector<std::string> semanticModel = ParseStringArray(json, semanticPos);
+    if (semanticModel.empty())
+    {
+        throw std::runtime_error("Invalid AST report: semantic_model must not be empty");
+    }
+
+    return semanticModel;
 }
 } // namespace apisig

@@ -11,6 +11,40 @@ It computes two signatures:
 - API hash: changes only when the normalized public API symbol set changes.
 - Rebuild hash: changes when API hash or build metadata changes.
 
+## Prerequisites
+
+For a straightforward Windows setup:
+
+- Visual Studio 2022 with the Desktop development with C++ workload
+- CMake 3.22 or newer available on `PATH`
+- A C++20-capable MSVC toolchain from Visual Studio 2022
+
+Optional, depending on the build flavor you choose:
+
+- internet access during CMake configure if you use the official LLVM SDK auto-download preset
+- a preinstalled LLVM/Clang SDK if you use `APISIG_LLVM_ROOT` or the non-download LibTooling build
+- `VCPKG_ROOT` if you use the vcpkg-based preset
+
+## Quick Start
+
+If you just checked out the sources and want one build that also enables the current test suite, use the official LLVM SDK preset:
+
+```powershell
+cmake --preset vs2022-x64-llvm-sdk-libtooling
+cmake --build --preset build-release-llvm-sdk-libtooling
+ctest --test-dir out/build-vs2022-llvm-sdk-libtooling -C Release --output-on-failure
+```
+
+That produces:
+
+- `out/build-vs2022-llvm-sdk-libtooling/Release/apisig.exe`
+
+You can then sanity-check the CLI surface with:
+
+```powershell
+out/build-vs2022-llvm-sdk-libtooling/Release/apisig.exe --help
+```
+
 ## Build
 
 ```powershell
@@ -67,6 +101,9 @@ cmake --preset vs2022-x64-llvm-sdk-libtooling
 cmake --build --preset build-release-llvm-sdk-libtooling
 ```
 
+This is the most convenient preset for a fresh checkout when you want LibTooling support without preinstalling LLVM manually.
+The VS2022 presets in this repository pin `CMAKE_SYSTEM_VERSION=10.0.26100.0` to avoid falling back to the Windows 8.1 SDK on machines that have multiple Windows Kits installed.
+
 The auto-download preset caches the official LLVM SDK archive and extraction under `out/llvm-sdk/`.
 Use `APISIG_LLVM_SDK_VERSION`, `APISIG_LLVM_SDK_URL`, or `APISIG_LLVM_SDK_CACHE_DIR` to override the default source or cache location.
 
@@ -75,7 +112,54 @@ Binary path:
 - out/build/Release/apisig.exe (multi-config generators)
 - out/build/apisig (single-config generators)
 
+For the preset builds in this repository, the executable is typically under one of:
+
+- `out/build-vs2022/Release/apisig.exe`
+- `out/build-vs2022-libtooling/Release/apisig.exe`
+- `out/build-vs2022-llvm-sdk-libtooling/Release/apisig.exe`
+
+## Tests
+
+The current automated tests are registered through CTest only when LibTooling is enabled.
+If you want to run all tests from a fresh checkout, prefer the official LLVM SDK LibTooling preset:
+
+```powershell
+cmake --preset vs2022-x64-llvm-sdk-libtooling
+cmake --build --preset build-release-llvm-sdk-libtooling
+ctest --test-dir out/build-vs2022-llvm-sdk-libtooling -C Release --output-on-failure
+```
+
+Run one focused test by name:
+
+```powershell
+ctest --test-dir out/build-vs2022-llvm-sdk-libtooling -C Release --output-on-failure -R apisig.semantic_model_compare
+```
+
+Current test coverage includes:
+
+- compdb overlap and ordering invariance
+- semantic change detection for enums, type members, and function signatures
+- AST report deserialization and schema validation
+- AST-to-AST compare mode
+
 ## Usage
+
+apisig has three separate concepts that are easy to conflate:
+
+- input mode: where the API model comes from
+- stdout format: how the command prints its result
+- persisted artifact: which JSON file, if any, gets written
+
+In practice:
+
+- `compute` computes the hash pair
+- `--json` prints that command result to stdout as JSON
+- `snapshot` computes the same hash pair and writes it as a baseline artifact
+- `--out <file>` names that baseline artifact file
+- `--ast-report-out <file>` writes a different artifact: the AST report JSON
+- `compute`, `snapshot`, and `compare` require exactly one input mode
+- `--ast-report-out <file>` is supported only with `extract`
+- `compare` also requires exactly one baseline mode: `--baseline` or `--baseline-ast-report-json`
 
 File-driven mode (available now):
 
@@ -95,10 +179,22 @@ Create or refresh a baseline file:
 apisig snapshot --symbols symbols.txt --metadata build.env --out apisig-baseline.json
 ```
 
+Print the same snapshot result to stdout as JSON while also writing the baseline file:
+
+```powershell
+apisig snapshot --symbols symbols.txt --metadata build.env --out apisig-baseline.json --json
+```
+
 Compare current signatures against a baseline:
 
 ```powershell
 apisig compare --symbols symbols.txt --metadata build.env --baseline apisig-baseline.json
+```
+
+Compare a current input mode directly against a baseline AST report JSON:
+
+```powershell
+apisig compare --ast-report-json current-ast-report.json --baseline-ast-report-json baseline-ast-report.json --json
 ```
 
 LibTooling mode (when built with LibTooling enabled):
@@ -112,6 +208,29 @@ Inspect clang-derived symbols from AST traversal:
 ```powershell
 apisig extract --compdb compile_commands.json --source-root . --json
 ```
+
+Dump full AST-considered declaration records used to derive the hashed symbol set:
+
+```powershell
+apisig extract --compdb compile_commands.json --source-root . --ast-report-out ast-report.json --json
+```
+
+Compute directly from a previously extracted semantic model report (no re-extraction):
+
+```powershell
+apisig compute --ast-report-json ast-report.json --json
+```
+
+Input mode summary:
+
+- `--symbols <file>`: line-based text input, normalized and hashed directly
+- `--compdb <file>` with `--source-root <dir>`: clang LibTooling extraction input
+- `--ast-report-json <file>`: previously extracted AST report JSON; reads `semantic_model`
+- For `compute`, `snapshot`, and `compare`, choose exactly one of those three input modes.
+- For `extract`, choose exactly one of `--symbols` or `--compdb`.
+- For `compare`, also choose exactly one baseline mode:
+  - `--baseline <file>`: baseline hash snapshot JSON
+  - `--baseline-ast-report-json <file>`: baseline AST report JSON
 
 Show command help explicitly:
 
@@ -156,6 +275,14 @@ Operational note:
 
 - LibTooling mode means apisig uses clang as a parser library.
 - It does not instrument your product code and does not force your product build to use clang.
+- `extract` prints canonical symbols only. `compute`/`snapshot`/`compare` hash that canonical symbol set (plus metadata for rebuild hash).
+- Use `--ast-report-out <file>` to persist declaration-level AST records (`kind`, `USR`, `qualified_name`, `api_signature`, source location) plus semantic content (enum constants/values, base classes, fields, and method signatures) for validation without flooding console output.
+- In LibTooling (`--compdb`) mode, `api_hash` is computed from a normalized semantic model (deduped, sorted, location-independent AST declaration data). In file-driven mode, `api_hash` remains based on normalized symbol lines.
+- AST report schema is versioned and authoritative for semantic model interchange:
+  - `schema`: `apisig.ast-report.v1`
+  - `format_version`: `1`
+  - `semantic_model`: canonical records used for API hashing
+  - Reference schema: [docs/ast-report.schema.json](docs/ast-report.schema.json)
 
 Strictness note:
 
@@ -193,14 +320,20 @@ Metadata file:
 
 ## Output
 
-`compute` returns:
+`compute` returns this result payload:
 
 - `api_hash`
 - `rebuild_hash`
 
 Current scaffold uses a stable 64-bit FNV-1a hash for deterministic output.
 
-`snapshot` writes a baseline JSON with `version`, `api_hash`, and `rebuild_hash`.
+`--json` affects stdout formatting only.
+
+`snapshot` writes a baseline JSON artifact with `version`, `api_hash`, and `rebuild_hash`.
+
+`--ast-report-out` writes an AST report JSON artifact containing `schema`, `format_version`, `symbols`, `semantic_model`, `declarations`, and `summary`.
+
+When `compare` uses `--baseline-ast-report-json`, comparison is API-only because AST reports do not carry rebuild metadata.
 
 `compare` returns:
 
