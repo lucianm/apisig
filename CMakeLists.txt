@@ -2,6 +2,14 @@ cmake_minimum_required(VERSION 3.22)
 
 project(apisig VERSION 0.1.0 LANGUAGES CXX)
 
+set(APISIG_VERSION_TWEAK "${PROJECT_VERSION_TWEAK}")
+if(APISIG_VERSION_TWEAK STREQUAL "")
+    set(APISIG_VERSION_TWEAK "0")
+endif()
+
+set(APISIG_FILE_VERSION "${PROJECT_VERSION_MAJOR},${PROJECT_VERSION_MINOR},${PROJECT_VERSION_PATCH},${APISIG_VERSION_TWEAK}")
+set(APISIG_FILE_VERSION_STR "${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH}.${APISIG_VERSION_TWEAK}")
+
 option(APISIG_SELF_CONTAINED "Build apisig without runtime dependency on clang libraries" ON)
 option(APISIG_WITH_LIBTOOLING "Enable clang LibTooling integration" OFF)
 option(APISIG_DOWNLOAD_LLVM_SDK "Download a prebuilt official LLVM SDK for LibTooling builds" OFF)
@@ -210,9 +218,19 @@ target_compile_definitions(apisig_core
         APISIG_HAVE_LIBTOOLING=$<BOOL:${APISIG_LIBTOOLING_ENABLED}>
 )
 
+set(APISIG_WIN_RESOURCE "")
+if(WIN32)
+    configure_file(
+        "${CMAKE_CURRENT_LIST_DIR}/src/apisig_version.rc.in"
+        "${CMAKE_CURRENT_BINARY_DIR}/apisig_version.rc"
+        @ONLY)
+    set(APISIG_WIN_RESOURCE "${CMAKE_CURRENT_BINARY_DIR}/apisig_version.rc")
+endif()
+
 add_executable(apisig
     src/Cli.cpp
     src/main.cpp
+    ${APISIG_WIN_RESOURCE}
 )
 
 apisig_enable_project_warnings(apisig)

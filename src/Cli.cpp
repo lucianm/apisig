@@ -35,6 +35,7 @@ struct CliOptions
     std::optional<std::filesystem::path> baselineAstReportJson;
     std::optional<std::filesystem::path> astReportOut;
     std::optional<std::filesystem::path> astReportJson;
+    bool astReportNoLocations = false;
     bool json = false;
     bool strictTooling = false;
     bool noToolingBanner = false;
@@ -119,6 +120,7 @@ void PrintUsage()
               << "  --baseline <file>    Read baseline hash JSON (compare only)\n"
               << "  --baseline-ast-report-json <file>  Read baseline API from an AST report JSON (compare only)\n"
               << "  --ast-report-out <file>  Write AST report JSON during compdb extraction\n\n"
+              << "  --ast-report-no-locations  Omit declaration line/column from AST report output\n\n"
               << "Stdout formatting:\n"
               << "  --json               Print the command result to stdout as JSON\n\n"
               << "Tooling controls:\n"
@@ -148,7 +150,10 @@ std::string ReadAllText(const std::filesystem::path& path)
         std::istreambuf_iterator<char>());
 }
 
-void WriteAstReportJson(const std::filesystem::path& path, const apisig::ExtractionReport& report)
+void WriteAstReportJson(
+    const std::filesystem::path& path,
+    const apisig::ExtractionReport& report,
+    bool includeLocations)
 {
      std::ofstream output(path);
      if (!output)
@@ -229,13 +234,17 @@ void WriteAstReportJson(const std::filesystem::path& path, const apisig::Extract
                        << "\",\n"
                         "      \"file\": \""
                     << EscapeJson(declaration.file)
-                    << "\",\n"
-                        "      \"line\": "
-                    << declaration.line
-                    << ",\n"
-                        "      \"column\": "
-                       << declaration.column
-                       << ",\n";
+                    << '"';
+                if (includeLocations)
+                {
+                    output << ",\n"
+                              "      \"line\": "
+                           << declaration.line
+                           << ",\n"
+                              "      \"column\": "
+                           << declaration.column;
+                }
+                output << ",\n";
 
                 output << "      \"enum_values\": [";
                 if (!declaration.enumValues.empty())
@@ -378,6 +387,11 @@ void ValidateOptions(const CliOptions& options)
     if (options.command != CommandType::Extract && options.astReportOut.has_value())
     {
         throw std::runtime_error("--ast-report-out is supported only with the extract command");
+    }
+
+    if (options.command != CommandType::Extract && options.astReportNoLocations)
+    {
+        throw std::runtime_error("--ast-report-no-locations is supported only with the extract command");
     }
 
     if (options.command == CommandType::Extract)
@@ -584,6 +598,10 @@ CliOptions ParseArguments(const std::vector<std::string>& args)
         {
             options.astReportJson = requireValue(arg);
         }
+        else if (arg == "--ast-report-no-locations")
+        {
+            options.astReportNoLocations = true;
+        }
         else if (arg == "--json")
         {
             options.json = true;
@@ -753,7 +771,7 @@ int RunCli(const std::vector<std::string>& args)
                     options.toolingSuppressions);
                 if (options.astReportOut.has_value())
                 {
-                    WriteAstReportJson(options.astReportOut.value(), report);
+                    WriteAstReportJson(options.astReportOut.value(), report, !options.astReportNoLocations);
                 }
                 PrintSymbols(report.symbols, options.json);
                 return ExitOk;

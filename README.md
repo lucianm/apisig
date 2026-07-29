@@ -118,6 +118,8 @@ For the preset builds in this repository, the executable is typically under one 
 - `out/build-vs2022-libtooling/Release/apisig.exe`
 - `out/build-vs2022-llvm-sdk-libtooling/Release/apisig.exe`
 
+On Windows, `apisig.exe` embeds standard version resource metadata (File Version and Product Version) derived from the project version and visible in Explorer and Win32 version APIs.
+
 ## Tests
 
 The current automated tests are registered through CTest only when LibTooling is enabled.
@@ -157,6 +159,7 @@ In practice:
 - `snapshot` computes the same hash pair and writes it as a baseline artifact
 - `--out <file>` names that baseline artifact file
 - `--ast-report-out <file>` writes a different artifact: the AST report JSON
+- `--ast-report-no-locations` omits declaration `line` and `column` fields in the AST report for diff-stable version control
 - `compute`, `snapshot`, and `compare` require exactly one input mode
 - `--ast-report-out <file>` is supported only with `extract`
 - `compare` also requires exactly one baseline mode: `--baseline` or `--baseline-ast-report-json`
