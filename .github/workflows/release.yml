@@ -6,6 +6,11 @@ on:
       - v*
   workflow_dispatch:
     inputs:
+      package_version:
+        description: Version string to use in package names when running manually
+        required: false
+        default: ""
+        type: string
       publish_release:
         description: Publish a GitHub release from this run
         required: false
@@ -46,6 +51,14 @@ jobs:
         shell: pwsh
         run: |
           $version = "${{ github.ref_name }}"
+          if ($version.StartsWith('v')) {
+            $version = $version.Substring(1)
+          }
+
+          if ([string]::IsNullOrWhiteSpace($version) -or $version -eq "main") {
+            $version = "${{ github.event.inputs.package_version }}"
+          }
+
           if ([string]::IsNullOrWhiteSpace($version) -or $version -eq "" -or $version -eq "main") {
               $version = "${{ github.sha }}".Substring(0, 8)
           }

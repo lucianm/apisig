@@ -107,6 +107,8 @@ The VS2022 presets in this repository pin `CMAKE_SYSTEM_VERSION=10.0.26100.0` to
 The auto-download preset caches the official LLVM SDK archive and extraction under `out/llvm-sdk/`.
 Use `APISIG_LLVM_SDK_VERSION`, `APISIG_LLVM_SDK_URL`, or `APISIG_LLVM_SDK_CACHE_DIR` to override the default source or cache location.
 
+GitHub Actions now runs the self-contained build on Windows, Ubuntu, and macOS, while keeping the Windows LibTooling + LLVM SDK job and tests on Windows only.
+
 Binary path:
 
 - out/build/Release/apisig.exe (multi-config generators)
@@ -119,6 +121,19 @@ For the preset builds in this repository, the executable is typically under one 
 - `out/build-vs2022-llvm-sdk-libtooling/Release/apisig.exe`
 
 On Windows, `apisig.exe` embeds standard version resource metadata (File Version and Product Version) derived from the project version and visible in Explorer and Win32 version APIs.
+
+## Release Naming
+
+Release artifacts follow a versioned naming convention:
+
+- tag pushes use the tag version with a leading `v` stripped for package names
+- manual release runs can override the version with the `package_version` workflow input
+- if no version is provided, the package name falls back to the short commit hash
+
+The current Windows release archive name is:
+
+- `apisig-<version>-windows-x64.7z`
+- `apisig-<version>-windows-x64.zip` if 7-Zip is unavailable on the runner
 
 ## Tests
 
