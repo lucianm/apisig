@@ -1,0 +1,56 @@
+name: Build
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Build (self-contained)
+            os: windows-latest
+            build_dir: out/ci-self-contained
+            cmake_generator: Visual Studio 17 2022
+            cmake_arch: x64
+            cmake_configure_args: -D APISIG_SELF_CONTAINED=ON -D APISIG_WITH_LIBTOOLING=OFF
+            run_tests: false
+
+          - label: Build (LibTooling + official LLVM SDK)
+            os: windows-latest
+            build_dir: out/ci-libtooling
+            cmake_generator: Visual Studio 17 2022
+            cmake_arch: x64
+            cmake_configure_args: -D APISIG_SELF_CONTAINED=OFF -D APISIG_WITH_LIBTOOLING=ON -D APISIG_DOWNLOAD_LLVM_SDK=ON
+            run_tests: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure
+        run: >-
+          cmake -S . -B ${{ matrix.build_dir }}
+          -G "${{ matrix.cmake_generator }}"
+          -A ${{ matrix.cmake_arch }}
+          ${{ matrix.cmake_configure_args }}
+
+      - name: Build
+        run: cmake --build ${{ matrix.build_dir }} --config Release --parallel
+
+      - name: Test
+        if: ${{ matrix.run_tests }}
+        run: ctest --test-dir ${{ matrix.build_dir }} -C Release --output-on-failure
+
