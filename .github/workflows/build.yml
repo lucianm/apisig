@@ -92,10 +92,10 @@ jobs:
 
           if [[ "$RUNNER_OS" == "Linux" ]]; then
             sudo apt-get update
-            sudo apt-get install -y llvm-dev clang libclang-dev
-            llvm_config="$(command -v llvm-config || command -v llvm-config-18)"
+            sudo apt-get install -y llvm-18 llvm-18-dev clang-18 libclang-18-dev
+            llvm_config="$(command -v llvm-config-18 || command -v llvm-config)"
           elif [[ "$RUNNER_OS" == "macOS" ]]; then
-            brew install llvm
+            HOMEBREW_NO_REQUIRE_TAP_TRUST=1 brew install llvm
             llvm_config="$(brew --prefix llvm)/bin/llvm-config"
           else
             echo "Unsupported runner OS: $RUNNER_OS" >&2
@@ -109,9 +109,21 @@ jobs:
 
           llvm_cmake_dir="$($llvm_config --cmakedir)"
           llvm_prefix="$(dirname "$(dirname "$(dirname "$llvm_cmake_dir")")")"
+          clang_cmake_dir="$(dirname "$llvm_cmake_dir")/clang"
+
+          if [[ ! -d "$clang_cmake_dir" ]]; then
+            clang_cmake_dir="$(find "$llvm_prefix" -type d -path '*/lib/cmake/clang' | head -n 1 || true)"
+          fi
+
+          if [[ -z "$clang_cmake_dir" || ! -d "$clang_cmake_dir" ]]; then
+            echo "Clang CMake package directory not found under $llvm_prefix" >&2
+            exit 1
+          fi
 
           echo "CMAKE_PREFIX_PATH=$llvm_prefix" >> "$GITHUB_ENV"
           echo "LLVM_CONFIG=$llvm_config" >> "$GITHUB_ENV"
+          echo "LLVM_DIR=$llvm_cmake_dir" >> "$GITHUB_ENV"
+          echo "Clang_DIR=$clang_cmake_dir" >> "$GITHUB_ENV"
 
       - name: Configure
         shell: pwsh
