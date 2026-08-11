@@ -25,6 +25,12 @@ Optional, depending on the build flavor you choose:
 - a preinstalled LLVM/Clang SDK if you use `APISIG_LLVM_ROOT` or the non-download LibTooling build
 - `VCPKG_ROOT` if you use the vcpkg-based preset
 
+LibTooling builds are supported on all three major desktop platforms, but the setup differs:
+
+- Windows can use the official LLVM SDK auto-download preset or a local LLVM/Clang installation
+- Linux and macOS use a locally installed LLVM/Clang toolchain discovered through CMake
+- the official SDK auto-download path remains Windows-only
+
 ## Quick Start
 
 If you just checked out the sources and want one build that also enables the current test suite, use the official LLVM SDK preset:
@@ -108,6 +114,7 @@ The auto-download preset caches the official LLVM SDK archive and extraction und
 Use `APISIG_LLVM_SDK_VERSION`, `APISIG_LLVM_SDK_URL`, or `APISIG_LLVM_SDK_CACHE_DIR` to override the default source or cache location.
 
 GitHub Actions now runs the self-contained build on Windows, Ubuntu, and macOS, while keeping the Windows LibTooling + LLVM SDK job and tests on Windows only.
+GitHub Actions also runs LibTooling builds on Ubuntu and macOS using the platform LLVM packages, while the downloadable LLVM SDK path remains Windows-only.
 
 Binary path:
 
@@ -138,7 +145,7 @@ The current Windows release archive name is:
 ## Tests
 
 The current automated tests are registered through CTest only when LibTooling is enabled.
-If you want to run all tests from a fresh checkout, prefer the official LLVM SDK LibTooling preset:
+If you want to run all tests from a fresh checkout on Windows, prefer the official LLVM SDK LibTooling preset:
 
 ```powershell
 cmake --preset vs2022-x64-llvm-sdk-libtooling
@@ -249,6 +256,8 @@ Input mode summary:
 - For `compare`, also choose exactly one baseline mode:
   - `--baseline <file>`: baseline hash snapshot JSON
   - `--baseline-ast-report-json <file>`: baseline AST report JSON
+
+  On Linux and macOS, use the LibTooling build with an installed LLVM/Clang toolchain instead of the Windows SDK auto-download path.
 
 Show command help explicitly:
 

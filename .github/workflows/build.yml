@@ -23,38 +23,95 @@ jobs:
           - label: Build (self-contained, Windows)
             os: windows-2022
             build_dir: out/ci-self-contained
+            libtooling: false
             cmake_generator_args: -G "Visual Studio 17 2022"
             cmake_arch_args: -A x64
             cmake_configure_args: -D APISIG_SELF_CONTAINED=ON -D APISIG_WITH_LIBTOOLING=OFF
             run_tests: false
+            ctest_args: ""
 
           - label: Build (LibTooling + official LLVM SDK, Windows)
             os: windows-2022
             build_dir: out/ci-libtooling
+            libtooling: true
             cmake_generator_args: -G "Visual Studio 17 2022"
             cmake_arch_args: -A x64
             cmake_configure_args: -D APISIG_SELF_CONTAINED=OFF -D APISIG_WITH_LIBTOOLING=ON -D APISIG_DOWNLOAD_LLVM_SDK=ON
             run_tests: true
+            ctest_args: -C Release
 
           - label: Build (self-contained, Ubuntu)
             os: ubuntu-24.04
             build_dir: out/ci-self-contained-ubuntu
+            libtooling: false
             cmake_generator_args: ""
             cmake_arch_args: ""
             cmake_configure_args: -D APISIG_SELF_CONTAINED=ON -D APISIG_WITH_LIBTOOLING=OFF
             run_tests: false
+            ctest_args: ""
 
           - label: Build (self-contained, macOS)
             os: macos-15
             build_dir: out/ci-self-contained-macos
+            libtooling: false
             cmake_generator_args: ""
             cmake_arch_args: ""
             cmake_configure_args: -D APISIG_SELF_CONTAINED=ON -D APISIG_WITH_LIBTOOLING=OFF
             run_tests: false
+            ctest_args: ""
+
+          - label: Build (LibTooling, Ubuntu)
+            os: ubuntu-24.04
+            build_dir: out/ci-libtooling-ubuntu
+            libtooling: true
+            cmake_generator_args: ""
+            cmake_arch_args: ""
+            cmake_configure_args: -D APISIG_SELF_CONTAINED=OFF -D APISIG_WITH_LIBTOOLING=ON
+            run_tests: true
+            ctest_args: ""
+
+          - label: Build (LibTooling, macOS)
+            os: macos-15
+            build_dir: out/ci-libtooling-macos
+            libtooling: true
+            cmake_generator_args: ""
+            cmake_arch_args: ""
+            cmake_configure_args: -D APISIG_SELF_CONTAINED=OFF -D APISIG_WITH_LIBTOOLING=ON
+            run_tests: true
+            ctest_args: ""
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Set up LLVM for LibTooling on Linux/macOS
+        if: ${{ matrix.libtooling && matrix.os != 'windows-2022' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            sudo apt-get update
+            sudo apt-get install -y llvm-dev clang libclang-dev
+            llvm_config="$(command -v llvm-config || command -v llvm-config-18)"
+          elif [[ "$RUNNER_OS" == "macOS" ]]; then
+            brew install llvm
+            llvm_config="$(brew --prefix llvm)/bin/llvm-config"
+          else
+            echo "Unsupported runner OS: $RUNNER_OS" >&2
+            exit 1
+          fi
+
+          if [[ ! -x "$llvm_config" ]]; then
+            echo "llvm-config not found at $llvm_config" >&2
+            exit 1
+          fi
+
+          llvm_cmake_dir="$($llvm_config --cmakedir)"
+          llvm_prefix="$(dirname "$(dirname "$(dirname "$llvm_cmake_dir")")")"
+
+          echo "CMAKE_PREFIX_PATH=$llvm_prefix" >> "$GITHUB_ENV"
+          echo "LLVM_CONFIG=$llvm_config" >> "$GITHUB_ENV"
 
       - name: Configure
         shell: pwsh
@@ -71,5 +128,5 @@ jobs:
       - name: Test
         if: ${{ matrix.run_tests }}
         shell: pwsh
-        run: ctest --test-dir ${{ matrix.build_dir }} -C Release --output-on-failure
+        run: ctest --test-dir ${{ matrix.build_dir }} ${{ matrix.ctest_args }} --output-on-failure
 
