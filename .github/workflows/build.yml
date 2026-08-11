@@ -94,9 +94,13 @@ jobs:
             sudo apt-get update
             sudo apt-get install -y llvm-18 llvm-18-dev clang-18 libclang-18-dev
             llvm_config="$(command -v llvm-config-18 || command -v llvm-config)"
+            llvm_cmake_dir="$($llvm_config --cmakedir)"
+            llvm_prefix="$(dirname "$(dirname "$(dirname "$llvm_cmake_dir")")")"
           elif [[ "$RUNNER_OS" == "macOS" ]]; then
             HOMEBREW_NO_REQUIRE_TAP_TRUST=1 brew install llvm
-            llvm_config="$(brew --prefix llvm)/bin/llvm-config"
+            llvm_prefix="$(brew --prefix llvm)"
+            llvm_config="$llvm_prefix/bin/llvm-config"
+            llvm_cmake_dir="$llvm_prefix/lib/cmake/llvm"
           else
             echo "Unsupported runner OS: $RUNNER_OS" >&2
             exit 1
@@ -107,8 +111,6 @@ jobs:
             exit 1
           fi
 
-          llvm_cmake_dir="$($llvm_config --cmakedir)"
-          llvm_prefix="$(dirname "$(dirname "$(dirname "$llvm_cmake_dir")")")"
           clang_cmake_dir="$(dirname "$llvm_cmake_dir")/clang"
 
           if [[ ! -d "$clang_cmake_dir" ]]; then
@@ -122,6 +124,7 @@ jobs:
 
           echo "CMAKE_PREFIX_PATH=$llvm_prefix" >> "$GITHUB_ENV"
           echo "LLVM_CONFIG=$llvm_config" >> "$GITHUB_ENV"
+          echo "APISIG_LLVM_ROOT=$llvm_prefix" >> "$GITHUB_ENV"
           echo "LLVM_DIR=$llvm_cmake_dir" >> "$GITHUB_ENV"
           echo "Clang_DIR=$clang_cmake_dir" >> "$GITHUB_ENV"
 
@@ -131,6 +134,7 @@ jobs:
           cmake -S . -B ${{ matrix.build_dir }}
           ${{ matrix.cmake_generator_args }}
           ${{ matrix.cmake_arch_args }}
+          -D APISIG_LLVM_ROOT=$env:APISIG_LLVM_ROOT
           ${{ matrix.cmake_configure_args }}
 
       - name: Build
