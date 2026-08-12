@@ -303,7 +303,57 @@ void WriteAstReportJson(
           output << '\n';
      }
      output << "  ],\n"
-                  "  \"summary\": {\n"
+                        "  \"macros\": [\n";
+
+      for (std::size_t i = 0; i < report.macros.size(); ++i)
+      {
+             const auto& macro = report.macros[i];
+             output << "    {\n"
+                         "      \"symbol\": \""
+                     << EscapeJson(macro.symbol)
+                     << "\",\n"
+                         "      \"name\": \""
+                     << EscapeJson(macro.name)
+                     << "\",\n"
+                         "      \"kind\": \""
+                     << EscapeJson(macro.kind)
+                     << "\",\n"
+                         "      \"signature\": \""
+                     << EscapeJson(macro.signature)
+                     << "\",\n"
+                         "      \"file\": \""
+                     << EscapeJson(macro.file)
+                     << '"';
+             if (includeLocations)
+             {
+                    output << ",\n"
+                                 "      \"line\": "
+                             << macro.line
+                             << ",\n"
+                                 "      \"column\": "
+                             << macro.column;
+             }
+             output << ",\n"
+                         "      \"variadic\": " << (macro.variadic ? "true" : "false") << ",\n";
+
+             writeStringArray(macro.parameters, "parameters", "      ");
+             output << ",\n";
+
+             writeStringArray(macro.replacementTokens, "replacement_tokens", "      ");
+             output << ",\n"
+                         "      \"replacement_text\": \""
+                     << EscapeJson(macro.replacementText)
+                     << "\"\n"
+                         "    }";
+             if (i + 1 < report.macros.size())
+             {
+                    output << ',';
+             }
+             output << '\n';
+      }
+
+      output << "  ],\n"
+                        "  \"summary\": {\n"
                   "    \"symbol_count\": "
               << canonicalSymbols.size()
               << ",\n"
@@ -312,6 +362,9 @@ void WriteAstReportJson(
               << ",\n"
                   "    \"declaration_count\": "
               << report.declarations.size()
+                  << ",\n"
+                      "    \"macro_count\": "
+                  << report.macros.size()
               << "\n"
                   "  }\n"
                   "}\n";

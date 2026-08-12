@@ -35,11 +35,27 @@ struct AstDeclarationRecord
     std::vector<std::string> methodSignatures;
 };
 
+struct AstMacroRecord
+{
+    std::string symbol;
+    std::string name;
+    std::string kind;
+    std::string signature;
+    std::string file;
+    std::uint32_t line = 0;
+    std::uint32_t column = 0;
+    bool variadic = false;
+    std::vector<std::string> parameters;
+    std::vector<std::string> replacementTokens;
+    std::string replacementText;
+};
+
 struct ExtractionReport
 {
     std::vector<std::string> symbols;
     std::vector<std::string> semanticModel;
     std::vector<AstDeclarationRecord> declarations;
+    std::vector<AstMacroRecord> macros;
 };
 
 ExtractionReport ExtractReportFromCompilationDatabase(

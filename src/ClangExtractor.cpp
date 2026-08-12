@@ -14,6 +14,9 @@
     #include <clang/Frontend/CompilerInstance.h>
     #include <clang/Frontend/FrontendActions.h>
     #include <clang/Index/USRGeneration.h>
+    #include <clang/Lex/Lexer.h>
+    #include <clang/Lex/PPCallbacks.h>
+    #include <clang/Lex/Preprocessor.h>
     #include <clang/Tooling/ArgumentsAdjusters.h>
     #include <clang/Tooling/CompilationDatabase.h>
     #include <clang/Tooling/JSONCompilationDatabase.h>
@@ -27,6 +30,7 @@ namespace
 {
 #if defined(APISIG_HAVE_LIBTOOLING) && APISIG_HAVE_LIBTOOLING
 std::string BuildCanonicalSemanticRecord(const apisig::AstDeclarationRecord& declaration);
+std::string BuildCanonicalMacroSemanticRecord(const apisig::AstMacroRecord& macro);
 
 class SymbolCollector
 {
@@ -47,6 +51,22 @@ public:
         }
     }
 
+    void AddMacro(const std::string& symbol, const apisig::AstMacroRecord& macro)
+    {
+        if (!symbol.empty())
+        {
+            m_Symbols.insert(symbol);
+
+            const std::string semanticRecord = BuildCanonicalMacroSemanticRecord(macro);
+            m_SemanticModel.insert(semanticRecord);
+
+            if (m_SeenMacroRecords.insert(semanticRecord).second)
+            {
+                m_Macros.push_back(macro);
+            }
+        }
+    }
+
     apisig::ExtractionReport ToReport() const
     {
         std::vector<apisig::AstDeclarationRecord> declarations = m_Declarations;
@@ -62,14 +82,29 @@ public:
             return left.apiSignature < right.apiSignature;
         });
 
-        return apisig::ExtractionReport{{m_Symbols.begin(), m_Symbols.end()}, {m_SemanticModel.begin(), m_SemanticModel.end()}, declarations};
+        std::vector<apisig::AstMacroRecord> macros = m_Macros;
+        std::sort(macros.begin(), macros.end(), [](const apisig::AstMacroRecord& left, const apisig::AstMacroRecord& right) {
+            if (left.name != right.name)
+            {
+                return left.name < right.name;
+            }
+            if (left.signature != right.signature)
+            {
+                return left.signature < right.signature;
+            }
+            return left.replacementText < right.replacementText;
+        });
+
+        return apisig::ExtractionReport{{m_Symbols.begin(), m_Symbols.end()}, {m_SemanticModel.begin(), m_SemanticModel.end()}, declarations, macros};
     }
 
 private:
     std::set<std::string> m_Symbols;
     std::set<std::string> m_SemanticModel;
     std::set<std::string> m_SeenDeclarationRecords;
+    std::set<std::string> m_SeenMacroRecords;
     std::vector<apisig::AstDeclarationRecord> m_Declarations;
+    std::vector<apisig::AstMacroRecord> m_Macros;
 };
 
 bool IsPathUnderRoot(const std::string& filePath, const std::filesystem::path& sourceRoot)
@@ -315,6 +350,226 @@ std::string BuildCanonicalSemanticRecord(const apisig::AstDeclarationRecord& dec
     return oss.str();
 }
 
+std::string BuildCanonicalMacroSemanticRecord(const apisig::AstMacroRecord& macro)
+{
+    std::string canonical = "macro|name=" + EscapeSemanticToken(macro.name)
+                          + "|kind=" + EscapeSemanticToken(macro.kind)
+                          + "|signature=" + EscapeSemanticToken(macro.signature)
+                          + "|variadic=" + std::string(macro.variadic ? "1" : "0");
+
+    if (!macro.parameters.empty())
+    {
+        canonical += "|params=";
+        for (std::size_t i = 0; i < macro.parameters.size(); ++i)
+        {
+            if (i > 0)
+            {
+                canonical += ",";
+            }
+            canonical += EscapeSemanticToken(macro.parameters[i]);
+        }
+    }
+
+    canonical += "|replacement=" + EscapeSemanticToken(macro.replacementText);
+
+    if (!macro.replacementTokens.empty())
+    {
+        canonical += "|tokens=";
+        for (std::size_t i = 0; i < macro.replacementTokens.size(); ++i)
+        {
+            if (i > 0)
+            {
+                canonical += ",";
+            }
+            canonical += EscapeSemanticToken(macro.replacementTokens[i]);
+        }
+    }
+
+    return canonical;
+}
+
+class PublicApiMacroCallbacks final : public clang::PPCallbacks
+{
+public:
+    PublicApiMacroCallbacks(
+        const clang::SourceManager& sourceManager,
+        const clang::LangOptions& langOptions,
+        SymbolCollector& collector,
+        const std::filesystem::path& sourceRoot)
+        : m_SourceManager(sourceManager)
+        , m_LangOptions(langOptions)
+        , m_Collector(collector)
+        , m_SourceRoot(sourceRoot)
+    {
+    }
+
+    void Ifndef(
+        clang::SourceLocation loc,
+        const clang::Token& macroNameToken,
+        const clang::MacroDefinition&) override
+    {
+        const clang::IdentifierInfo* identifier = macroNameToken.getIdentifierInfo();
+        if (identifier == nullptr)
+        {
+            return;
+        }
+
+        const clang::SourceLocation directiveLocation = m_SourceManager.getExpansionLoc(loc);
+        if (!directiveLocation.isValid())
+        {
+            return;
+        }
+
+        const std::string filePath = m_SourceManager.getFilename(directiveLocation).str();
+        if (filePath.empty() || !IsPathUnderRoot(filePath, m_SourceRoot))
+        {
+            return;
+        }
+
+        const clang::PresumedLoc presumed = m_SourceManager.getPresumedLoc(directiveLocation);
+        if (!presumed.isValid() || presumed.getLine() > 64)
+        {
+            return;
+        }
+
+        const std::string normalizedFile = NormalizePathForReport(filePath, m_SourceRoot);
+        m_PotentialHeaderGuards.insert(BuildGuardKey(normalizedFile, identifier->getName().str()));
+    }
+
+    void MacroDefined(const clang::Token& macroNameToken, const clang::MacroDirective* macroDirective) override
+    {
+        if (macroDirective == nullptr)
+        {
+            return;
+        }
+
+        const clang::IdentifierInfo* identifier = macroNameToken.getIdentifierInfo();
+        if (identifier == nullptr)
+        {
+            return;
+        }
+
+        const clang::MacroInfo* macroInfo = macroDirective->getMacroInfo();
+        if (macroInfo == nullptr || macroInfo->isBuiltinMacro() || macroInfo->isUsedForHeaderGuard())
+        {
+            return;
+        }
+
+        const std::string macroName = identifier->getName().str();
+        if (macroName.empty())
+        {
+            return;
+        }
+
+        const clang::SourceLocation definitionLocation = m_SourceManager.getExpansionLoc(macroInfo->getDefinitionLoc());
+        if (!definitionLocation.isValid())
+        {
+            return;
+        }
+
+        const std::string filePath = m_SourceManager.getFilename(definitionLocation).str();
+        if (filePath.empty() || !IsPathUnderRoot(filePath, m_SourceRoot))
+        {
+            return;
+        }
+
+        const clang::PresumedLoc presumed = m_SourceManager.getPresumedLoc(definitionLocation);
+        if (!presumed.isValid())
+        {
+            return;
+        }
+
+        std::vector<std::string> parameters;
+        bool variadic = false;
+        std::string kind = "object";
+        std::string signature = macroName;
+
+        if (macroInfo->isFunctionLike())
+        {
+            kind = "function";
+            variadic = macroInfo->isVariadic();
+
+            for (const clang::IdentifierInfo* param : macroInfo->params())
+            {
+                if (param == nullptr)
+                {
+                    continue;
+                }
+                parameters.push_back(param->getName().str());
+            }
+
+            signature += "(";
+            for (std::size_t i = 0; i < parameters.size(); ++i)
+            {
+                if (i > 0)
+                {
+                    signature += ", ";
+                }
+                signature += parameters[i];
+            }
+            if (variadic)
+            {
+                if (!parameters.empty())
+                {
+                    signature += ", ";
+                }
+                signature += "...";
+            }
+            signature += ")";
+        }
+
+        std::vector<std::string> replacementTokens;
+        replacementTokens.reserve(macroInfo->getNumTokens());
+        for (const clang::Token& token : macroInfo->tokens())
+        {
+            replacementTokens.push_back(clang::Lexer::getSpelling(token, m_SourceManager, m_LangOptions));
+        }
+
+        std::string replacementText;
+        for (std::size_t i = 0; i < replacementTokens.size(); ++i)
+        {
+            if (i > 0)
+            {
+                replacementText += " ";
+            }
+            replacementText += replacementTokens[i];
+        }
+
+        const std::string normalizedFile = NormalizePathForReport(filePath, m_SourceRoot);
+        if (macroInfo->getNumTokens() == 0
+            && m_PotentialHeaderGuards.find(BuildGuardKey(normalizedFile, macroName)) != m_PotentialHeaderGuards.end())
+        {
+            return;
+        }
+
+        const std::string symbol = "macro:" + macroName;
+        m_Collector.AddMacro(symbol, apisig::AstMacroRecord{
+                                       symbol,
+                                       macroName,
+                                       kind,
+                                       signature,
+                                       normalizedFile,
+                                       static_cast<std::uint32_t>(presumed.getLine()),
+                                       static_cast<std::uint32_t>(presumed.getColumn()),
+                                       variadic,
+                                       parameters,
+                                       replacementTokens,
+                                       replacementText});
+    }
+
+private:
+    static std::string BuildGuardKey(const std::string& normalizedFile, const std::string& macroName)
+    {
+        return normalizedFile + "|" + macroName;
+    }
+
+    const clang::SourceManager& m_SourceManager;
+    const clang::LangOptions& m_LangOptions;
+    SymbolCollector& m_Collector;
+    std::filesystem::path m_SourceRoot;
+    std::set<std::string> m_PotentialHeaderGuards;
+};
+
 class PublicApiVisitor final : public clang::RecursiveASTVisitor<PublicApiVisitor>
 {
 public:
@@ -509,8 +764,13 @@ public:
     {
     }
 
-    std::unique_ptr<clang::ASTConsumer> CreateASTConsumer(clang::CompilerInstance&, llvm::StringRef) override
+    std::unique_ptr<clang::ASTConsumer> CreateASTConsumer(clang::CompilerInstance& compiler, llvm::StringRef) override
     {
+        compiler.getPreprocessor().addPPCallbacks(std::make_unique<PublicApiMacroCallbacks>(
+            compiler.getSourceManager(),
+            compiler.getLangOpts(),
+            m_Collector,
+            m_SourceRoot));
         return std::make_unique<PublicApiConsumer>(m_Collector, m_SourceRoot);
     }
 

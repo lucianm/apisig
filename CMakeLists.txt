@@ -310,4 +310,11 @@ if(BUILD_TESTING AND APISIG_LIBTOOLING_ENABLED)
             -DAPISIG_EXE=$<TARGET_FILE:apisig>
             -DWORK_DIR=${CMAKE_BINARY_DIR}/tests/semantic-model-compare
             -P ${CMAKE_SOURCE_DIR}/tests/run_semantic_model_compare.cmake)
+
+    add_test(
+        NAME apisig.macro_semantic_model
+        COMMAND ${CMAKE_COMMAND}
+            -DAPISIG_EXE=$<TARGET_FILE:apisig>
+            -DWORK_DIR=${CMAKE_BINARY_DIR}/tests/macro-semantic-model
+            -P ${CMAKE_SOURCE_DIR}/tests/run_macro_semantic_model.cmake)
 endif()
