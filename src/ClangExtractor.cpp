@@ -395,12 +395,61 @@ public:
         const clang::SourceManager& sourceManager,
         const clang::LangOptions& langOptions,
         SymbolCollector& collector,
-        const std::filesystem::path& sourceRoot)
+        const std::filesystem::path& sourceRoot,
+        const std::string& mainFilePath)
         : m_SourceManager(sourceManager)
         , m_LangOptions(langOptions)
         , m_Collector(collector)
         , m_SourceRoot(sourceRoot)
+        , m_MainFileForReport(NormalizePathForReport(mainFilePath, sourceRoot))
     {
+        if (!m_MainFileForReport.empty())
+        {
+            m_TrustedIncludeFiles.insert(m_MainFileForReport);
+        }
+    }
+
+    void InclusionDirective(
+        clang::SourceLocation hashLoc,
+        const clang::Token&,
+        llvm::StringRef,
+        bool,
+        clang::CharSourceRange,
+        clang::OptionalFileEntryRef file,
+        llvm::StringRef,
+        llvm::StringRef,
+        const clang::Module*,
+        bool,
+        clang::SrcMgr::CharacteristicKind) override
+    {
+        if (!file.has_value())
+        {
+            return;
+        }
+
+        const clang::SourceLocation includeLocation = m_SourceManager.getExpansionLoc(hashLoc);
+        if (!includeLocation.isValid())
+        {
+            return;
+        }
+
+        const std::string sourceFilePath = m_SourceManager.getFilename(includeLocation).str();
+        if (sourceFilePath.empty())
+        {
+            return;
+        }
+
+        const std::string sourceFile = NormalizePathForReport(sourceFilePath, m_SourceRoot);
+        if (!IsTrustedMacroFile(sourceFile))
+        {
+            return;
+        }
+
+        const std::string includedFile = NormalizePathForReport(file->getName().str(), m_SourceRoot);
+        if (!includedFile.empty())
+        {
+            m_TrustedIncludeFiles.insert(includedFile);
+        }
     }
 
     void Ifndef(
@@ -473,6 +522,12 @@ public:
             return;
         }
 
+        const std::string normalizedFile = NormalizePathForReport(filePath, m_SourceRoot);
+        if (!IsTrustedMacroFile(normalizedFile))
+        {
+            return;
+        }
+
         const clang::PresumedLoc presumed = m_SourceManager.getPresumedLoc(definitionLocation);
         if (!presumed.isValid())
         {
@@ -535,7 +590,6 @@ public:
             replacementText += replacementTokens[i];
         }
 
-        const std::string normalizedFile = NormalizePathForReport(filePath, m_SourceRoot);
         if (macroInfo->getNumTokens() == 0
             && m_PotentialHeaderGuards.find(BuildGuardKey(normalizedFile, macroName)) != m_PotentialHeaderGuards.end())
         {
@@ -558,6 +612,12 @@ public:
     }
 
 private:
+    bool IsTrustedMacroFile(const std::string& normalizedFile) const
+    {
+        return !normalizedFile.empty()
+            && m_TrustedIncludeFiles.find(normalizedFile) != m_TrustedIncludeFiles.end();
+    }
+
     static std::string BuildGuardKey(const std::string& normalizedFile, const std::string& macroName)
     {
         return normalizedFile + "|" + macroName;
@@ -567,6 +627,8 @@ private:
     const clang::LangOptions& m_LangOptions;
     SymbolCollector& m_Collector;
     std::filesystem::path m_SourceRoot;
+    std::string m_MainFileForReport;
+    std::set<std::string> m_TrustedIncludeFiles;
     std::set<std::string> m_PotentialHeaderGuards;
 };
 
@@ -764,13 +826,14 @@ public:
     {
     }
 
-    std::unique_ptr<clang::ASTConsumer> CreateASTConsumer(clang::CompilerInstance& compiler, llvm::StringRef) override
+    std::unique_ptr<clang::ASTConsumer> CreateASTConsumer(clang::CompilerInstance& compiler, llvm::StringRef inFile) override
     {
         compiler.getPreprocessor().addPPCallbacks(std::make_unique<PublicApiMacroCallbacks>(
             compiler.getSourceManager(),
             compiler.getLangOpts(),
             m_Collector,
-            m_SourceRoot));
+            m_SourceRoot,
+            inFile.str()));
         return std::make_unique<PublicApiConsumer>(m_Collector, m_SourceRoot);
     }
 

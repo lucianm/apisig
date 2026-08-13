@@ -12,16 +12,18 @@ file(TO_CMAKE_PATH "${WORK_DIR}" WORK_DIR_NORM)
 
 function(write_case case_name header_text)
     set(header_path "${WORK_DIR_NORM}/api_${case_name}.h")
+        set(forced_header_path "${WORK_DIR_NORM}/forced_${case_name}.h")
     set(tu_path "${WORK_DIR_NORM}/tu_${case_name}.cpp")
     set(compdb_path "${WORK_DIR_NORM}/compile_commands_${case_name}.json")
 
     file(WRITE "${header_path}" "${header_text}")
+        file(WRITE "${forced_header_path}" "#pragma once\n#define FORCED_ONLY_${case_name} 1\n")
     file(WRITE "${tu_path}" "#include \"api_${case_name}.h\"\n")
     file(WRITE "${compdb_path}" "[
   {
     \"directory\": \"${WORK_DIR_NORM}\",
     \"file\": \"${tu_path}\",
-    \"arguments\": [\"clang++\", \"-std=c++20\", \"-I${WORK_DIR_NORM}\", \"-c\", \"${tu_path}\"]
+        \"arguments\": [\"clang++\", \"-std=c++20\", \"-I${WORK_DIR_NORM}\", \"-FIforced_${case_name}.h\", \"-c\", \"${tu_path}\"]
   }
 ]
 ")
@@ -68,6 +70,10 @@ endif()
 string(FIND "${baseline_report_text}" "\"symbol\": \"macro:API_BASELINE_H\"" has_include_guard_macro)
 if(NOT has_include_guard_macro EQUAL -1)
     message(FATAL_ERROR "Include guard macro must be excluded from AST report\n${baseline_report_text}")
+endif()
+string(FIND "${baseline_report_text}" "\"symbol\": \"macro:FORCED_ONLY_baseline\"" has_forced_macro)
+if(NOT has_forced_macro EQUAL -1)
+    message(FATAL_ERROR "Forced-include macro must be excluded from AST report\n${baseline_report_text}")
 endif()
 
 execute_process(
